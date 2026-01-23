@@ -1,5 +1,19 @@
 /* Task Manager Plugin Styles */
 
+/* Container for all task decorations - wraps as a single unit */
+.task-decorations-container {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  vertical-align: baseline;
+  margin-left: 4px;
+}
+
+/* Remove left margin from first child since container has it */
+.task-decorations-container > :first-child {
+  margin-left: 0;
+}
+
 /* Info button styling */
 .task-info-button {
   display: inline-flex;
@@ -98,13 +112,28 @@
   font-weight: 400;
   transition: background 0.15s ease;
   user-select: none;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   white-space: nowrap;
   vertical-align: baseline;
 }
 
 .task-note-button:hover {
   background: rgba(0, 0, 0, 0.1);
+}
+
+.task-note-button-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+}
+
+.task-note-button-icon svg {
+  width: 10px;
+  height: 10px;
 }
 
 /* Schedule tag pills */

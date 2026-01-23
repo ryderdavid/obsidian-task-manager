@@ -634,7 +634,21 @@ const TaskNoteManager = {
     return false;
   },
 
-  async openOrCreateTaskNote(app, settings, taskText, sourceFilePath) {
+  /**
+   * Opens an existing task note or creates a new one.
+   *
+   * Task notes store expanded information about a task including:
+   * - taskId: The unique identifier linking this note to the task in daily notes
+   * - sourceFile: The daily note where the task currently lives (updated on schedule)
+   * - Subtasks synced from the source file
+   *
+   * @param {App} app - Obsidian app instance
+   * @param {Object} settings - Plugin settings
+   * @param {string} taskText - The cleaned task text (used as filename)
+   * @param {string} sourceFilePath - Path to the daily note containing this task
+   * @param {string} taskId - Optional task ID (e.g., "t-abc123") for linking
+   */
+  async openOrCreateTaskNote(app, settings, taskText, sourceFilePath, taskId = null) {
     const sanitizedName = this.sanitizeFilename(taskText);
     if (!sanitizedName) {
       new obsidian.Notice('Could not extract task name');
@@ -661,8 +675,12 @@ const TaskNoteManager = {
 
       const sourceLink = sourceFilePath ? `[[${sourceFilePath.replace(/\.md$/, '')}]]` : '';
 
+      // Task note frontmatter includes taskId for future reference/lookup
+      // Even if we update sourceFile on schedule, taskId provides a fallback
+      // to find the task across the vault if needed
       const content = `---
 task: "${taskText.replace(/"/g, '\\"')}"
+taskId: "${taskId || ''}"
 created: ${new Date().toISOString().split('T')[0]}
 sourceFile: "${sourceFilePath || ''}"
 ---
@@ -694,6 +712,126 @@ ${subtasksContent}
     }
 
     return file;
+  },
+
+  // ============================================================================
+  // TASK NOTE SOURCE SYNCHRONIZATION
+  // ============================================================================
+  //
+  // WHY THIS EXISTS:
+  // ----------------
+  // When a task is scheduled from one day to another (e.g., from 2026-01-22 to
+  // 2026-01-24), the task physically moves to a new daily note file. However,
+  // if that task has a Task Note (a dedicated note file for expanded task info),
+  // the Task Note's "sourceFile" metadata would still point to the OLD date.
+  //
+  // This creates a broken link: clicking "Source" in the Task Note would take
+  // you to the wrong day.
+  //
+  // THE SOLUTION:
+  // -------------
+  // When scheduling a task, we also update its Task Note (if one exists) to
+  // point to the NEW daily note. This keeps the Task Note's sourceFile in sync
+  // with where the task actually lives.
+  //
+  // HOW IT WORKS:
+  // 1. User schedules task from today (2026-01-22) to future (2026-01-24)
+  // 2. TaskScheduler copies task to 2026-01-24 with [< 2026-01-22] tag
+  // 3. TaskScheduler marks original with [>] and [> 2026-01-24] tag
+  // 4. TaskScheduler calls updateTaskNoteSourceFile()
+  // 5. We find the Task Note by the task's text (filename match)
+  // 6. We update both YAML frontmatter and the **Source:** link in the body
+  //
+  // FALLBACK:
+  // ---------
+  // The Task Note also stores "taskId" in frontmatter. If sourceFile ever gets
+  // out of sync (manual moves, etc.), a future enhancement could search by
+  // taskId to find the task's current location.
+  // ============================================================================
+
+  /**
+   * Updates a Task Note when a task is scheduled to a new date.
+   * Called by TaskScheduler.scheduleTask() after moving a task.
+   *
+   * Updates three things in the Task Note:
+   * - sourceFile: The daily note path where the active task copy lives
+   * - scheduled: The date (YYYY-MM-DD) the task is currently scheduled for
+   * - **Source:** link in the body
+   *
+   * @param {App} app - Obsidian app instance
+   * @param {Object} settings - Plugin settings (needs taskNotesFolder)
+   * @param {string} taskText - The task text (used to find the Task Note)
+   * @param {string} newSourcePath - Full path like "00 - Daily/2026-01-24.md"
+   * @param {string} scheduledDate - The target date in YYYY-MM-DD format
+   * @returns {Promise<boolean>} True if Task Note was found and updated
+   */
+  async updateTaskNoteSourceFile(app, settings, taskText, newSourcePath, scheduledDate) {
+    // Find the Task Note by sanitized task name
+    const sanitizedName = this.sanitizeFilename(taskText);
+    if (!sanitizedName) return false;
+
+    const filePath = `${settings.taskNotesFolder}/${sanitizedName}.md`;
+    const file = app.vault.getAbstractFileByPath(filePath);
+
+    // No Task Note exists for this task - that's fine, not all tasks have notes
+    if (!file || !(file instanceof obsidian.TFile)) {
+      return false;
+    }
+
+    let content = await app.vault.read(file);
+    let modified = false;
+
+    // Update YAML frontmatter: sourceFile: "old/path.md" → sourceFile: "new/path.md"
+    // Note: We use replace() directly instead of test() + replace() to avoid
+    // regex lastIndex issues. Replace returns the original string if no match.
+    const sourceFileRegex = /^(sourceFile:\s*")([^"]*)(")$/m;
+    const newFrontmatterContent = content.replace(sourceFileRegex, `$1${newSourcePath}$3`);
+    if (newFrontmatterContent !== content) {
+      content = newFrontmatterContent;
+      modified = true;
+    }
+
+    // Update or add scheduled field in frontmatter
+    // This tracks which date the task is currently scheduled for
+    const scheduledRegex = /^(scheduled:\s*)(\S+)$/m;
+    if (scheduledRegex.test(content)) {
+      // Update existing scheduled field
+      const newScheduledContent = content.replace(scheduledRegex, `$1${scheduledDate}`);
+      if (newScheduledContent !== content) {
+        content = newScheduledContent;
+        modified = true;
+      }
+    } else {
+      // Add scheduled field after sourceFile (or at end of frontmatter if sourceFile missing)
+      const insertAfterSourceFile = content.replace(
+        /^(sourceFile:\s*"[^"]*")$/m,
+        `$1\nscheduled: ${scheduledDate}`
+      );
+      if (insertAfterSourceFile !== content) {
+        content = insertAfterSourceFile;
+        modified = true;
+      } else {
+        // sourceFile not found, insert before closing ---
+        content = content.replace(/^(---)$/m, `scheduled: ${scheduledDate}\n$1`);
+        modified = true;
+      }
+    }
+
+    // Update body link: **Source:** [[old/path]] → **Source:** [[new/path]]
+    const newLink = `[[${newSourcePath.replace(/\.md$/, '')}]]`;
+    const sourceLinkRegex = /^(\*\*Source:\*\*\s*)\[\[[^\]]+\]\]/m;
+    const newBodyContent = content.replace(sourceLinkRegex, `$1${newLink}`);
+    if (newBodyContent !== content) {
+      content = newBodyContent;
+      modified = true;
+    }
+
+    if (modified) {
+      await app.vault.modify(file, content);
+      return true;
+    }
+
+    return false;
   }
 };
 
@@ -754,7 +892,35 @@ const TaskScheduler = {
     return newLine;
   },
 
-  // Schedule a task to a target date
+  // ============================================================================
+  // SCHEDULE TASK TO TARGET DATE
+  // ============================================================================
+  //
+  // This is the main scheduling function. When a user schedules a task:
+  //
+  // 1. ORIGINAL TASK (current daily note):
+  //    - Marker changes from [ ] to [>] (indicating "scheduled away")
+  //    - Time block is removed (task no longer occupies time today)
+  //    - Tag [> YYYY-MM-DD] is added showing where it went
+  //
+  // 2. TASK AT TARGET (target daily note):
+  //    - If task (by ID) already exists there: UPDATE its [< DATE] tag
+  //    - If task doesn't exist there: APPEND new copy with [< DATE] tag
+  //    - The [< DATE] tag always shows the MOST RECENT source (where it came from)
+  //
+  // 3. TASK NOTE (if exists):
+  //    - sourceFile updated to point to the TARGET daily note
+  //    - Because the "active" copy of the task now lives there
+  //
+  // EDGE CASE: Scheduling back to a previous date
+  // ----------------------------------------------
+  // If you schedule a task 1/23 → 1/24 → 1/30 → 1/23, the task on 1/23 should:
+  // - NOT create a duplicate (same task ID already exists)
+  // - UPDATE the existing task's [< DATE] tag to show 1/30 (most recent source)
+  // - The old [>] marker on 1/23 gets updated to the new destination
+  //
+  // ============================================================================
+
   async scheduleTask(app, settings, editor, lineNum, targetDate) {
     // Re-read the line fresh (it may have changed since modal opened)
     const line = editor.getLine(lineNum);
@@ -769,7 +935,11 @@ const TaskScheduler = {
       return false;
     }
 
-    const currentDate = this.getCurrentDate();
+    // Get the current file's date as the "from" date
+    // This is the date we're scheduling FROM, not necessarily today's calendar date
+    const activeFile = app.workspace.getActiveFile();
+    const fromDate = activeFile ? activeFile.basename : this.getCurrentDate();
+
     const targetPath = this.getDailyNotePath(targetDate, settings);
 
     // Get or create the target daily note
@@ -792,17 +962,72 @@ const TaskScheduler = {
       return false;
     }
 
-    // Create the task copy for the target date
-    const taskCopy = this.createScheduledTaskCopy(line, currentDate);
+    // Extract task ID to check for existing copy in target
+    const taskId = TaskUtils.extractId(line);
 
-    // First, mark the original task as scheduled (update in place)
+    // Read target file content
+    let targetContent = await app.vault.read(targetFile);
+
+    // Check if this task (by ID) already exists in the target file
+    let taskExistsInTarget = false;
+    if (taskId) {
+      const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
+      taskExistsInTarget = idPattern.test(targetContent);
+    }
+
+    if (taskExistsInTarget) {
+      // -----------------------------------------------------------------------
+      // TASK ALREADY EXISTS IN TARGET - Update its [< DATE] tag
+      // -----------------------------------------------------------------------
+      // This handles the case where a task bounces back to a previous date.
+      // We update the existing task's "scheduled from" tag to show the most
+      // recent source, and reset its marker from [>] to [ ] if needed.
+      // -----------------------------------------------------------------------
+      const lines = targetContent.split('\n');
+      const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
+
+      for (let i = 0; i < lines.length; i++) {
+        if (idPattern.test(lines[i])) {
+          let updatedLine = lines[i];
+          // Reset marker to [ ] (it's now the active copy)
+          updatedLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
+          // Remove old scheduling tags
+          updatedLine = this.removeSchedulingTags(updatedLine);
+          // Add new [< fromDate] tag
+          updatedLine = updatedLine.trimEnd() + ` [< ${fromDate}]`;
+          lines[i] = updatedLine;
+          break;
+        }
+      }
+      targetContent = lines.join('\n');
+    } else {
+      // -----------------------------------------------------------------------
+      // TASK DOESN'T EXIST IN TARGET - Append new copy
+      // -----------------------------------------------------------------------
+      const taskCopy = this.createScheduledTaskCopy(line, fromDate);
+      targetContent = targetContent.trimEnd() + '\n' + taskCopy;
+    }
+
+    // Write updated target file
+    await app.vault.modify(targetFile, targetContent);
+
+    // Mark the original task as scheduled (update in place)
     const updatedLine = this.markTaskAsScheduled(line, targetDate);
     editor.setLine(lineNum, updatedLine);
 
-    // Then append the copy to the target daily note
-    const targetContent = await app.vault.read(targetFile);
-    const newTargetContent = targetContent.trimEnd() + '\n' + taskCopy;
-    await app.vault.modify(targetFile, newTargetContent);
+    // -----------------------------------------------------------------------
+    // UPDATE TASK NOTE (if one exists for this task)
+    // -----------------------------------------------------------------------
+    const taskText = TaskNoteManager.extractTaskTextFromLine(line);
+    if (taskText) {
+      await TaskNoteManager.updateTaskNoteSourceFile(
+        app,
+        settings,
+        taskText,
+        targetPath,
+        targetDate  // Pass the scheduled date for the scheduled field
+      );
+    }
 
     new obsidian.Notice(`Task scheduled to ${targetDate}`);
     return true;
@@ -874,22 +1099,27 @@ const SCHEDULE_DATE_OPTIONS = [
 ];
 
 // ============================================================================
-// SLASH COMMAND SUGGEST
+// SHARED ICONS (Font Awesome)
 // ============================================================================
 
-// SVG icons (Font Awesome style)
-const SLASH_COMMAND_ICONS = {
+const Icons = {
   check: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path fill="currentColor" d="M438.6 105.4c12.5 12.5 12.5 32.8 0 45.3l-256 256c-12.5 12.5-32.8 12.5-45.3 0l-128-128c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0L160 338.7 393.4 105.4c12.5-12.5 32.8-12.5 45.3 0z"/></svg>',
   halfCircle: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M448 256c0-106-86-192-192-192V448c106 0 192-86 192-192zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z"/></svg>',
   ban: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M367.2 412.5L99.5 144.8C77.1 176.1 64 214.5 64 256c0 106 86 192 192 192c41.5 0 79.9-13.1 111.2-35.5zm45.3-45.3C434.9 335.9 448 297.5 448 256c0-106-86-192-192-192c-41.5 0-79.9 13.1-111.2 35.5L412.5 367.2zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z"/></svg>',
-  anglesRight: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M470.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 256 265.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160zm-352 160l160-160c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L210.7 256 73.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0z"/></svg>'
+  anglesRight: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M470.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 256 265.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160zm-352 160l160-160c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L210.7 256 73.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0z"/></svg>',
+  // file-lines (solid) - document with lines icon
+  fileLines: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path fill="currentColor" d="M64 0C28.7 0 0 28.7 0 64V448c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V160H256c-17.7 0-32-14.3-32-32V0H64zM256 0V128H384L256 0zM112 256H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16z"/></svg>'
 };
 
+// ============================================================================
+// SLASH COMMAND SUGGEST
+// ============================================================================
+
 const SLASH_COMMANDS = [
-  { id: 'complete', label: 'Mark Complete', icon: SLASH_COMMAND_ICONS.check, marker: 'x' },
-  { id: 'in-progress', label: 'Mark In Progress', icon: SLASH_COMMAND_ICONS.halfCircle, marker: '/' },
-  { id: 'cancelled', label: 'Mark Cancelled', icon: SLASH_COMMAND_ICONS.ban, marker: '-' },
-  { id: 'schedule', label: 'Schedule Task', icon: SLASH_COMMAND_ICONS.anglesRight, action: 'schedule' }
+  { id: 'complete', label: 'Mark Complete', icon: Icons.check, marker: 'x' },
+  { id: 'in-progress', label: 'Mark In Progress', icon: Icons.halfCircle, marker: '/' },
+  { id: 'cancelled', label: 'Mark Cancelled', icon: Icons.ban, marker: '-' },
+  { id: 'schedule', label: 'Schedule Task', icon: Icons.anglesRight, action: 'schedule' }
 ];
 
 class SlashCommandSuggest extends obsidian.EditorSuggest {
@@ -959,6 +1189,59 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
     const popup = new ScheduleDatePopup(this.plugin, editor, lineNum);
     popup.open();
   }
+}
+
+// ============================================================================
+// SCHEDULE SHORTCUT SUGGEST (> triggers ScheduleDatePopup directly)
+// ============================================================================
+
+class ScheduleShortcutSuggest extends obsidian.EditorSuggest {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  onTrigger(cursor, editor, file) {
+    // Only trigger on task lines
+    const line = editor.getLine(cursor.line);
+    if (!TaskUtils.isTask(line)) return null;
+
+    // Find the ">" character before cursor
+    const lineUpToCursor = line.substring(0, cursor.ch);
+    const triggerIndex = lineUpToCursor.lastIndexOf('>');
+
+    if (triggerIndex === -1) return null;
+
+    // Don't trigger if at start of line (would be blockquote)
+    if (triggerIndex === 0) return null;
+
+    const beforeTrigger = lineUpToCursor.substring(0, triggerIndex);
+    // Don't trigger if preceded by another > (nested blockquote)
+    if (beforeTrigger.endsWith('>')) return null;
+    // Don't trigger if this > is part of a scheduling tag [> or [<
+    // Check if preceded by "[" (scheduling tag like [> 2026-01-24])
+    if (beforeTrigger.endsWith('[')) return null;
+
+    // Immediately open the schedule popup and return null to not show suggest UI
+    // Remove the ">" character first
+    const start = { line: cursor.line, ch: triggerIndex };
+    const end = cursor;
+    editor.replaceRange('', start, end);
+
+    // Open the same ScheduleDatePopup used by the slash command
+    const popup = new ScheduleDatePopup(this.plugin, editor, cursor.line);
+    popup.open();
+
+    return null;
+  }
+
+  getSuggestions(context) {
+    return [];
+  }
+
+  renderSuggestion(suggestion, el) {}
+
+  selectSuggestion(suggestion, evt) {}
 }
 
 // ============================================================================
@@ -1159,18 +1442,140 @@ class ScheduleDatePopup {
 // UI COMPONENTS
 // ============================================================================
 
-// Widget for the task note button
+// Container widget that holds all task decorations (notes button, pills, info button)
+// so they wrap together as a single unit
+class TaskDecorationsWidget extends WidgetType {
+  constructor(options, plugin) {
+    super();
+    this.options = options; // { taskText, taskId, parentId, scheduleToDates, scheduleFromDates, showInfoButton, showNotesButton }
+    this.plugin = plugin;
+  }
+
+  toDOM() {
+    const container = document.createElement('span');
+    container.className = 'task-decorations-container';
+
+    // Add notes button if enabled
+    if (this.options.showNotesButton && this.options.taskText) {
+      const btn = document.createElement('span');
+      btn.className = 'task-note-button';
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'task-note-button-icon';
+      iconSpan.innerHTML = Icons.fileLines;
+      btn.appendChild(iconSpan);
+      btn.appendChild(document.createTextNode('notes'));
+      btn.setAttribute('aria-label', 'Open task note');
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const activeFile = this.plugin.app.workspace.getActiveFile();
+        const sourceFilePath = activeFile ? activeFile.path : null;
+        await TaskNoteManager.openOrCreateTaskNote(
+          this.plugin.app,
+          this.plugin.settings,
+          this.options.taskText,
+          sourceFilePath,
+          this.options.taskId
+        );
+      });
+      container.appendChild(btn);
+    }
+
+    // Add schedule-to pills
+    if (this.options.scheduleToDates) {
+      for (const date of this.options.scheduleToDates) {
+        const pill = document.createElement('span');
+        pill.className = 'schedule-pill schedule-pill-to';
+        pill.textContent = `→ ${date}`;
+        pill.setAttribute('aria-label', `Go to ${date}`);
+        pill.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await this.navigateToDate(date);
+        });
+        container.appendChild(pill);
+      }
+    }
+
+    // Add schedule-from pills
+    if (this.options.scheduleFromDates) {
+      for (const date of this.options.scheduleFromDates) {
+        const pill = document.createElement('span');
+        pill.className = 'schedule-pill schedule-pill-from';
+        pill.textContent = `← ${date}`;
+        pill.setAttribute('aria-label', `Go to ${date}`);
+        pill.addEventListener('click', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          await this.navigateToDate(date);
+        });
+        container.appendChild(pill);
+      }
+    }
+
+    // Add info button if enabled
+    if (this.options.showInfoButton && (this.options.taskId || this.options.parentId)) {
+      const btn = document.createElement('span');
+      btn.className = 'task-info-button';
+      btn.textContent = '\u24D8'; // ⓘ
+      btn.title = 'Task info';
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.plugin.showTaskInfo(this.options.taskId, this.options.parentId, this.options.taskText);
+      });
+      container.appendChild(btn);
+    }
+
+    return container;
+  }
+
+  async navigateToDate(date) {
+    const path = TaskScheduler.getDailyNotePath(date, this.plugin.settings);
+    let file = this.plugin.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+      file = await this.plugin.app.vault.create(path, '');
+    }
+    if (file instanceof obsidian.TFile) {
+      await this.plugin.app.workspace.getLeaf().openFile(file);
+    }
+  }
+
+  eq(other) {
+    return (
+      other.options.taskText === this.options.taskText &&
+      other.options.taskId === this.options.taskId &&
+      other.options.parentId === this.options.parentId &&
+      JSON.stringify(other.options.scheduleToDates) === JSON.stringify(this.options.scheduleToDates) &&
+      JSON.stringify(other.options.scheduleFromDates) === JSON.stringify(this.options.scheduleFromDates) &&
+      other.options.showInfoButton === this.options.showInfoButton &&
+      other.options.showNotesButton === this.options.showNotesButton
+    );
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
+// Widget for the task note button (kept for backwards compatibility)
 class TaskNoteButtonWidget extends WidgetType {
-  constructor(taskText, plugin) {
+  constructor(taskText, taskId, plugin) {
     super();
     this.taskText = taskText;
+    this.taskId = taskId;  // Store taskId for inclusion in new Task Notes
     this.plugin = plugin;
   }
 
   toDOM() {
     const btn = document.createElement('span');
     btn.className = 'task-note-button';
-    btn.textContent = '📝 notes';
+    // Use Font Awesome file-lines icon + text
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'task-note-button-icon';
+    iconSpan.innerHTML = Icons.fileLines;
+    btn.appendChild(iconSpan);
+    btn.appendChild(document.createTextNode('notes'));
     btn.setAttribute('aria-label', 'Open task note');
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
@@ -1181,14 +1586,15 @@ class TaskNoteButtonWidget extends WidgetType {
         this.plugin.app,
         this.plugin.settings,
         this.taskText,
-        sourceFilePath
+        sourceFilePath,
+        this.taskId  // Pass taskId so new Task Notes include it in frontmatter
       );
     });
     return btn;
   }
 
   eq(other) {
-    return other.taskText === this.taskText;
+    return other.taskText === this.taskText && other.taskId === this.taskId;
   }
 
   ignoreEvent() {
@@ -1610,6 +2016,10 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const parentId = TaskUtils.extractParentId(lineText);
                 const isParentTask = parentTaskPattern.test(lineText);
 
+                // Collect schedule dates for unified widget
+                const scheduleToDates = [];
+                const scheduleFromDates = [];
+
                 // Hide metadata fields if enabled
                 if (plugin.settings.hideMetadataFields) {
                   let match;
@@ -1625,123 +2035,84 @@ class TaskManagerPlugin extends obsidian.Plugin {
                   }
                 }
 
-                // Handle schedule-to tags [> YYYY-MM-DD]
+                // Handle schedule-to tags [> YYYY-MM-DD] - hide raw tags
                 let scheduleToMatch;
                 scheduleToPattern.lastIndex = 0;
                 while ((scheduleToMatch = scheduleToPattern.exec(lineText)) !== null) {
                   const start = line.from + scheduleToMatch.index;
                   const end = start + scheduleToMatch[0].length;
-                  const date = scheduleToMatch[1];
-                  // Hide the raw tag
+                  scheduleToDates.push(scheduleToMatch[1]);
                   decorations.push({
                     from: start,
                     to: end,
                     value: Decoration.replace({})
                   });
-                  // Add pill widget at end of line
-                  decorations.push({
-                    from: line.to,
-                    to: line.to,
-                    value: Decoration.widget({
-                      widget: new ScheduledToPillWidget(date, plugin),
-                      side: 0
-                    })
-                  });
                 }
 
-                // Handle schedule-from tags [< YYYY-MM-DD]
+                // Handle schedule-from tags [< YYYY-MM-DD] - hide raw tags
                 let scheduleFromMatch;
                 scheduleFromPattern.lastIndex = 0;
                 while ((scheduleFromMatch = scheduleFromPattern.exec(lineText)) !== null) {
                   const start = line.from + scheduleFromMatch.index;
                   const end = start + scheduleFromMatch[0].length;
-                  const date = scheduleFromMatch[1];
-                  // Hide the raw tag
+                  scheduleFromDates.push(scheduleFromMatch[1]);
                   decorations.push({
                     from: start,
                     to: end,
                     value: Decoration.replace({})
                   });
-                  // Add pill widget at end of line
-                  decorations.push({
-                    from: line.to,
-                    to: line.to,
-                    value: Decoration.widget({
-                      widget: new ScheduledFromPillWidget(date, plugin),
-                      side: 0
-                    })
-                  });
                 }
 
-                // Handle legacy schedule-to tags [sch_to::DATE]
+                // Handle legacy schedule-to tags [sch_to::DATE] - hide raw tags
                 let legacyToMatch;
                 legacyScheduleToPattern.lastIndex = 0;
                 while ((legacyToMatch = legacyScheduleToPattern.exec(lineText)) !== null) {
                   const start = line.from + legacyToMatch.index;
                   const end = start + legacyToMatch[0].length;
-                  const date = legacyToMatch[1];
+                  scheduleToDates.push(legacyToMatch[1]);
                   decorations.push({
                     from: start,
                     to: end,
                     value: Decoration.replace({})
                   });
-                  decorations.push({
-                    from: line.to,
-                    to: line.to,
-                    value: Decoration.widget({
-                      widget: new ScheduledToPillWidget(date, plugin),
-                      side: 0
-                    })
-                  });
                 }
 
-                // Handle legacy schedule-from tags [sch_from::DATE]
+                // Handle legacy schedule-from tags [sch_from::DATE] - hide raw tags
                 let legacyFromMatch;
                 legacyScheduleFromPattern.lastIndex = 0;
                 while ((legacyFromMatch = legacyScheduleFromPattern.exec(lineText)) !== null) {
                   const start = line.from + legacyFromMatch.index;
                   const end = start + legacyFromMatch[0].length;
-                  const date = legacyFromMatch[1];
+                  scheduleFromDates.push(legacyFromMatch[1]);
                   decorations.push({
                     from: start,
                     to: end,
                     value: Decoration.replace({})
                   });
+                }
+
+                // Determine what to show in the unified container
+                const taskText = TaskNoteManager.extractTaskTextFromLine(lineText);
+                const showNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
+                const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId);
+                const hasSchedulePills = scheduleToDates.length > 0 || scheduleFromDates.length > 0;
+
+                // Add unified container widget if there's anything to show
+                if (showNotesButton || showInfoButton || hasSchedulePills) {
                   decorations.push({
                     from: line.to,
                     to: line.to,
                     value: Decoration.widget({
-                      widget: new ScheduledFromPillWidget(date, plugin),
-                      side: 0
-                    })
-                  });
-                }
-
-                // Add task note button for parent tasks (not in task notes folder)
-                if (plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder) {
-                  const taskText = TaskNoteManager.extractTaskTextFromLine(lineText);
-                  if (taskText && taskText.trim() !== '') {
-                    decorations.push({
-                      from: line.to,
-                      to: line.to,
-                      value: Decoration.widget({
-                        widget: new TaskNoteButtonWidget(taskText, plugin),
-                        side: 1
-                      })
-                    });
-                  }
-                }
-
-                // Add info button if enabled and there's metadata
-                if (plugin.settings.showInfoButton && (taskId || parentId)) {
-                  // Extract clean task text for display in modal
-                  const infoTaskText = TaskNoteManager.extractTaskTextFromLine(lineText);
-                  decorations.push({
-                    from: line.to,
-                    to: line.to,
-                    value: Decoration.widget({
-                      widget: new InfoButtonWidget(taskId, parentId, infoTaskText, plugin),
-                      side: 2
+                      widget: new TaskDecorationsWidget({
+                        taskText: taskText,
+                        taskId: taskId,
+                        parentId: parentId,
+                        scheduleToDates: scheduleToDates.length > 0 ? scheduleToDates : null,
+                        scheduleFromDates: scheduleFromDates.length > 0 ? scheduleFromDates : null,
+                        showInfoButton: showInfoButton,
+                        showNotesButton: showNotesButton
+                      }, plugin),
+                      side: 1
                     })
                   });
                 }
@@ -1771,6 +2142,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
     // Register slash command suggest
     this.registerEditorSuggest(new SlashCommandSuggest(this.app, this));
+
+    // Register schedule shortcut suggest (> shortcut)
+    this.registerEditorSuggest(new ScheduleShortcutSuggest(this.app, this));
 
     // Task notes sync state
     this.taskNoteSyncing = false;
