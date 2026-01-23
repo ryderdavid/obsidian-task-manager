@@ -802,14 +802,86 @@ const TaskScheduler = {
 };
 
 // ============================================================================
+// SCHEDULE DATE OPTIONS
+// ============================================================================
+
+const ScheduleDateUtils = {
+  formatDate(date) {
+    return date.toISOString().split('T')[0];
+  },
+
+  getTomorrow() {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return this.formatDate(d);
+  },
+
+  getDayAfterTomorrow() {
+    const d = new Date();
+    d.setDate(d.getDate() + 2);
+    return this.formatDate(d);
+  },
+
+  getNextMonday() {
+    const d = new Date();
+    const dayOfWeek = d.getDay();
+    // Days until next Monday: if today is Monday (1), go to next week's Monday (7 days)
+    // Otherwise calculate days remaining
+    const daysUntilMonday = dayOfWeek === 0 ? 1 : dayOfWeek === 1 ? 7 : 8 - dayOfWeek;
+    d.setDate(d.getDate() + daysUntilMonday);
+    return this.formatDate(d);
+  },
+
+  getOneWeekFromNow() {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return this.formatDate(d);
+  },
+
+  // Parse and normalize date input (YYYYMMDD or YYYY-MM-DD)
+  parseCustomDate(input) {
+    if (!input) return null;
+    const cleaned = input.trim();
+
+    // Try YYYY-MM-DD format
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+      return cleaned;
+    }
+
+    // Try YYYYMMDD format
+    if (/^\d{8}$/.test(cleaned)) {
+      return `${cleaned.slice(0, 4)}-${cleaned.slice(4, 6)}-${cleaned.slice(6, 8)}`;
+    }
+
+    return null;
+  }
+};
+
+const SCHEDULE_DATE_OPTIONS = [
+  { id: 'tomorrow', label: 'Tomorrow', getDate: () => ScheduleDateUtils.getTomorrow() },
+  { id: 'day-after', label: 'Day After Tomorrow', getDate: () => ScheduleDateUtils.getDayAfterTomorrow() },
+  { id: 'next-monday', label: 'Next Monday', getDate: () => ScheduleDateUtils.getNextMonday() },
+  { id: 'one-week', label: 'In One Week', getDate: () => ScheduleDateUtils.getOneWeekFromNow() },
+  { id: 'custom', label: 'Enter a date...', isCustom: true }
+];
+
+// ============================================================================
 // SLASH COMMAND SUGGEST
 // ============================================================================
 
+// SVG icons (Font Awesome style)
+const SLASH_COMMAND_ICONS = {
+  check: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><path fill="currentColor" d="M438.6 105.4c12.5 12.5 12.5 32.8 0 45.3l-256 256c-12.5 12.5-32.8 12.5-45.3 0l-128-128c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0L160 338.7 393.4 105.4c12.5-12.5 32.8-12.5 45.3 0z"/></svg>',
+  halfCircle: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M448 256c0-106-86-192-192-192V448c106 0 192-86 192-192zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z"/></svg>',
+  ban: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M367.2 412.5L99.5 144.8C77.1 176.1 64 214.5 64 256c0 106 86 192 192 192c41.5 0 79.9-13.1 111.2-35.5zm45.3-45.3C434.9 335.9 448 297.5 448 256c0-106-86-192-192-192c-41.5 0-79.9 13.1-111.2 35.5L412.5 367.2zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z"/></svg>',
+  anglesRight: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M470.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 256 265.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160zm-352 160l160-160c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L210.7 256 73.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0z"/></svg>'
+};
+
 const SLASH_COMMANDS = [
-  { id: 'complete', label: 'Mark Complete', icon: '✓', marker: 'x' },
-  { id: 'in-progress', label: 'Mark In Progress', icon: '/', marker: '/' },
-  { id: 'cancelled', label: 'Mark Cancelled', icon: '−', marker: '-' },
-  { id: 'schedule', label: 'Schedule Task', icon: '📅', action: 'schedule' }
+  { id: 'complete', label: 'Mark Complete', icon: SLASH_COMMAND_ICONS.check, marker: 'x' },
+  { id: 'in-progress', label: 'Mark In Progress', icon: SLASH_COMMAND_ICONS.halfCircle, marker: '/' },
+  { id: 'cancelled', label: 'Mark Cancelled', icon: SLASH_COMMAND_ICONS.ban, marker: '-' },
+  { id: 'schedule', label: 'Schedule Task', icon: SLASH_COMMAND_ICONS.anglesRight, action: 'schedule' }
 ];
 
 class SlashCommandSuggest extends obsidian.EditorSuggest {
@@ -850,7 +922,8 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
 
   renderSuggestion(suggestion, el) {
     el.addClass('slash-command-item');
-    el.createSpan({ text: suggestion.icon, cls: 'slash-command-icon' });
+    const iconSpan = el.createSpan({ cls: 'slash-command-icon' });
+    iconSpan.innerHTML = suggestion.icon;
     el.createSpan({ text: suggestion.label, cls: 'slash-command-label' });
   }
 
@@ -870,22 +943,207 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
       const newLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, `$1${suggestion.marker}$2`);
       editor.setLine(lineNum, newLine);
     } else if (suggestion.action === 'schedule') {
-      this.openScheduleModal(editor, lineNum);
+      this.openSchedulePopup(editor, lineNum);
     }
   }
 
-  openScheduleModal(editor, lineNum) {
-    new ScheduleTaskModal(this.plugin.app, async (date) => {
-      if (date) {
-        await TaskScheduler.scheduleTask(
-          this.plugin.app,
-          this.plugin.settings,
-          editor,
-          lineNum,
-          date
-        );
+  openSchedulePopup(editor, lineNum) {
+    const popup = new ScheduleDatePopup(this.plugin, editor, lineNum);
+    popup.open();
+  }
+}
+
+// ============================================================================
+// SCHEDULE DATE POPUP
+// ============================================================================
+
+class ScheduleDatePopup {
+  constructor(plugin, editor, lineNum) {
+    this.plugin = plugin;
+    this.editor = editor;
+    this.lineNum = lineNum;
+    this.selectedIndex = 0;
+    this.isCustomMode = false;
+    this.container = null;
+    this.customInput = null;
+
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.handleClickOutside = this.handleClickOutside.bind(this);
+  }
+
+  open() {
+    // Create popup container
+    this.container = document.createElement('div');
+    this.container.className = 'schedule-date-popup';
+
+    // Build the options list
+    this.renderOptions();
+
+    // Position the popup near the cursor
+    this.positionPopup();
+
+    // Add to DOM
+    document.body.appendChild(this.container);
+
+    // Add event listeners
+    document.addEventListener('keydown', this.handleKeyDown, true);
+    setTimeout(() => {
+      document.addEventListener('click', this.handleClickOutside);
+    }, 10);
+  }
+
+  close() {
+    if (this.container) {
+      this.container.remove();
+      this.container = null;
+    }
+    document.removeEventListener('keydown', this.handleKeyDown, true);
+    document.removeEventListener('click', this.handleClickOutside);
+  }
+
+  renderOptions() {
+    this.container.empty();
+
+    SCHEDULE_DATE_OPTIONS.forEach((option, index) => {
+      const item = document.createElement('div');
+      item.className = 'schedule-date-option';
+      if (index === this.selectedIndex) {
+        item.addClass('is-selected');
       }
-    }).open();
+
+      if (option.isCustom && this.isCustomMode) {
+        // Render input field
+        this.customInput = document.createElement('input');
+        this.customInput.type = 'text';
+        this.customInput.className = 'schedule-date-custom-input';
+        this.customInput.placeholder = 'YYYY-MM-DD';
+        this.customInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            this.submitCustomDate();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            this.close();
+          }
+        });
+        item.appendChild(this.customInput);
+        setTimeout(() => this.customInput.focus(), 0);
+      } else {
+        item.createSpan({ text: option.label, cls: 'schedule-date-label' });
+        if (option.getDate) {
+          item.createSpan({ text: option.getDate(), cls: 'schedule-date-value' });
+        }
+      }
+
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectedIndex = index;
+        this.selectOption(option);
+      });
+
+      this.container.appendChild(item);
+    });
+  }
+
+  positionPopup() {
+    // Get cursor position from CodeMirror
+    const view = this.plugin.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    if (!view) return;
+
+    const cm = view.editor.cm;
+    if (!cm) return;
+
+    const cursor = this.editor.getCursor();
+    const coords = cm.coordsAtPos(cm.state.doc.line(cursor.line + 1).from);
+
+    if (coords) {
+      this.container.style.position = 'absolute';
+      this.container.style.left = `${coords.left}px`;
+      this.container.style.top = `${coords.bottom + 5}px`;
+      this.container.style.zIndex = '1000';
+    }
+  }
+
+  handleKeyDown(e) {
+    if (this.isCustomMode && this.customInput && document.activeElement === this.customInput) {
+      // Let input handle its own keys except Escape
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.close();
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectedIndex = Math.min(this.selectedIndex + 1, SCHEDULE_DATE_OPTIONS.length - 1);
+        this.renderOptions();
+        break;
+
+      case 'ArrowUp':
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectedIndex = Math.max(this.selectedIndex - 1, 0);
+        this.renderOptions();
+        break;
+
+      case 'Enter':
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectOption(SCHEDULE_DATE_OPTIONS[this.selectedIndex]);
+        break;
+
+      case 'Escape':
+        e.preventDefault();
+        e.stopPropagation();
+        this.close();
+        break;
+    }
+  }
+
+  handleClickOutside(e) {
+    if (this.container && !this.container.contains(e.target)) {
+      this.close();
+    }
+  }
+
+  selectOption(option) {
+    if (option.isCustom) {
+      if (!this.isCustomMode) {
+        this.isCustomMode = true;
+        this.renderOptions();
+      }
+    } else if (option.getDate) {
+      this.scheduleToDate(option.getDate());
+    }
+  }
+
+  submitCustomDate() {
+    if (!this.customInput) return;
+
+    const parsed = ScheduleDateUtils.parseCustomDate(this.customInput.value);
+    if (parsed) {
+      this.scheduleToDate(parsed);
+    } else {
+      new obsidian.Notice('Invalid date format. Use YYYY-MM-DD or YYYYMMDD');
+    }
+  }
+
+  async scheduleToDate(date) {
+    this.close();
+    await TaskScheduler.scheduleTask(
+      this.plugin.app,
+      this.plugin.settings,
+      this.editor,
+      this.lineNum,
+      date
+    );
   }
 }
 
@@ -995,63 +1253,6 @@ class TaskInfoModal extends obsidian.Modal {
   }
 }
 
-// Modal for scheduling tasks
-class ScheduleTaskModal extends obsidian.Modal {
-  constructor(app, onSubmit) {
-    super(app);
-    this.onSubmit = onSubmit;
-  }
-
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass('schedule-task-modal');
-
-    contentEl.createEl('h3', { text: 'Schedule Task' });
-
-    const inputContainer = contentEl.createDiv({ cls: 'schedule-input-container' });
-
-    const dateInput = inputContainer.createEl('input', {
-      type: 'date',
-      cls: 'schedule-date-input'
-    });
-    // Default to tomorrow
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    dateInput.valueAsDate = tomorrow;
-
-    const btnContainer = contentEl.createDiv({ cls: 'schedule-btn-container' });
-
-    const submitBtn = btnContainer.createEl('button', {
-      text: 'Schedule',
-      cls: 'mod-cta'
-    });
-    submitBtn.addEventListener('click', () => {
-      this.onSubmit(dateInput.value);
-      this.close();
-    });
-
-    const cancelBtn = btnContainer.createEl('button', { text: 'Cancel' });
-    cancelBtn.addEventListener('click', () => {
-      this.onSubmit(null);
-      this.close();
-    });
-
-    // Handle Enter key
-    dateInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        this.onSubmit(dateInput.value);
-        this.close();
-      }
-    });
-
-    dateInput.focus();
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
-}
 
 // Widget for the info button
 class InfoButtonWidget extends WidgetType {
