@@ -1,0 +1,108 @@
+/* Task Manager Plugin Styles */
+
+/* Info button styling */
+.task-info-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.15s ease;
+  vertical-align: middle;
+  user-select: none;
+}
+
+/* Prevent Tasks plugin "notes" button from breaking across lines */
+.tasks-edit {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.task-info-button:hover {
+  opacity: 1;
+  color: var(--text-accent);
+}
+
+/* Modal styling */
+.task-info-modal {
+  padding: 16px;
+}
+
+.task-info-modal h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.task-info-content {
+  margin-bottom: 16px;
+}
+
+.task-info-row {
+  margin-bottom: 8px;
+  font-family: var(--font-monospace);
+  font-size: 13px;
+}
+
+.task-info-label {
+  color: var(--text-muted);
+}
+
+.task-info-value {
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.task-info-value.task-info-name {
+  font-family: var(--font-text);
+  font-weight: 500;
+  display: inline-block;
+  max-width: 400px;
+  word-wrap: break-word;
+}
+
+.task-info-note {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.task-unlink-btn {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.task-unlink-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+/* Task note button styling */
+.task-note-button {
+  cursor: pointer;
+  margin-left: 4px;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-muted);
+  border-radius: 14px;
+  font-size: 0.85em;
+  font-weight: 400;
+  transition: background 0.15s ease;
+  user-select: none;
+  display: inline-block;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
+.task-note-button:hover {
+  background: rgba(0, 0, 0, 0.1);
+}

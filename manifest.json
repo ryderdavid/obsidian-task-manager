@@ -1,0 +1,9 @@
+{
+  "id": "task-manager",
+  "name": "Task Manager",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Unified task management: IDs, parent-child linking, and chronological sorting",
+  "author": "Custom",
+  "isDesktopOnly": false
+}
