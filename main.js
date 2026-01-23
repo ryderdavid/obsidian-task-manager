@@ -695,6 +695,113 @@ ${subtasksContent}
 };
 
 // ============================================================================
+// TASK SCHEDULER MODULE
+// ============================================================================
+
+const TaskScheduler = {
+  // Remove existing scheduling tags from a line
+  removeSchedulingTags(line) {
+    return line
+      .replace(/\s*\[sch_from::[^\]]+\]/g, '')
+      .replace(/\s*\[sch_to::[^\]]+\]/g, '')
+      .replace(/\s*📅\s*\[\[[^\]]+\]\]/g, '')
+      .replace(/\s*📅\s*\d{4}-\d{2}-\d{2}/g, '');
+  },
+
+  // Get current date in YYYY-MM-DD format
+  getCurrentDate() {
+    return new Date().toISOString().split('T')[0];
+  },
+
+  // Get the daily note path for a given date
+  getDailyNotePath(date, settings) {
+    // Use the first target folder as the daily notes folder
+    const dailyFolder = settings.targetFolders[0] || '00 - Daily/';
+    const folder = dailyFolder.replace(/\/$/, '');
+    return `${folder}/${date}.md`;
+  },
+
+  // Create the scheduled copy of a task (for the target date)
+  createScheduledTaskCopy(line, fromDate) {
+    // Remove the [>] marker and restore to [ ] for the copy
+    let taskCopy = line.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
+    // Remove any existing scheduling tags and calendar icons
+    taskCopy = this.removeSchedulingTags(taskCopy);
+    // Keep the task ID (same task, different date)
+    // Remove parent tags (will be re-linked if needed)
+    taskCopy = taskCopy.replace(/\s*\[parent::\s*[^\]]+\]/g, '');
+    // Add sch_from tag
+    taskCopy = taskCopy.trimEnd() + ` [sch_from::${fromDate}]`;
+    return taskCopy;
+  },
+
+  // Mark the original task as scheduled
+  markTaskAsScheduled(line, toDate) {
+    // Change marker to [>]
+    let newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
+    // Remove any existing scheduling tags
+    newLine = this.removeSchedulingTags(newLine);
+    // Add sch_to tag
+    newLine = newLine.trimEnd() + ` [sch_to::${toDate}]`;
+    return newLine;
+  },
+
+  // Schedule a task to a target date
+  async scheduleTask(app, settings, editor, lineNum, targetDate) {
+    // Re-read the line fresh (it may have changed since modal opened)
+    const line = editor.getLine(lineNum);
+    if (!TaskUtils.isTask(line)) {
+      new obsidian.Notice('Not a task line');
+      return false;
+    }
+
+    // Check if already scheduled to this date
+    if (line.includes(`[sch_to::${targetDate}]`)) {
+      new obsidian.Notice('Task already scheduled to this date');
+      return false;
+    }
+
+    const currentDate = this.getCurrentDate();
+    const targetPath = this.getDailyNotePath(targetDate, settings);
+
+    // Get or create the target daily note
+    let targetFile = app.vault.getAbstractFileByPath(targetPath);
+
+    if (!targetFile) {
+      // Create the daily note if it doesn't exist
+      const folder = targetPath.substring(0, targetPath.lastIndexOf('/'));
+      const folderExists = app.vault.getAbstractFileByPath(folder);
+      if (!folderExists) {
+        await app.vault.createFolder(folder);
+      }
+      // Create empty daily note
+      targetFile = await app.vault.create(targetPath, '');
+      new obsidian.Notice(`Created daily note: ${targetDate}`);
+    }
+
+    if (!(targetFile instanceof obsidian.TFile)) {
+      new obsidian.Notice('Target is not a file');
+      return false;
+    }
+
+    // Create the task copy for the target date
+    const taskCopy = this.createScheduledTaskCopy(line, currentDate);
+
+    // First, mark the original task as scheduled (update in place)
+    const updatedLine = this.markTaskAsScheduled(line, targetDate);
+    editor.setLine(lineNum, updatedLine);
+
+    // Then append the copy to the target daily note
+    const targetContent = await app.vault.read(targetFile);
+    const newTargetContent = targetContent.trimEnd() + '\n' + taskCopy;
+    await app.vault.modify(targetFile, newTargetContent);
+
+    new obsidian.Notice(`Task scheduled to ${targetDate}`);
+    return true;
+  }
+};
+
+// ============================================================================
 // SLASH COMMAND SUGGEST
 // ============================================================================
 
@@ -768,16 +875,15 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
   }
 
   openScheduleModal(editor, lineNum) {
-    new ScheduleTaskModal(this.plugin.app, (date) => {
+    new ScheduleTaskModal(this.plugin.app, async (date) => {
       if (date) {
-        const line = editor.getLine(lineNum);
-        // Change to scheduled marker [>] and append date
-        let newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
-        // Add scheduled date if not present
-        if (!newLine.includes('📅')) {
-          newLine = newLine.trimEnd() + ` 📅 ${date}`;
-        }
-        editor.setLine(lineNum, newLine);
+        await TaskScheduler.scheduleTask(
+          this.plugin.app,
+          this.plugin.settings,
+          editor,
+          lineNum,
+          date
+        );
       }
     }).open();
   }
@@ -909,7 +1015,10 @@ class ScheduleTaskModal extends obsidian.Modal {
       type: 'date',
       cls: 'schedule-date-input'
     });
-    dateInput.valueAsDate = new Date();
+    // Default to tomorrow
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    dateInput.valueAsDate = tomorrow;
 
     const btnContainer = contentEl.createDiv({ cls: 'schedule-btn-container' });
 
