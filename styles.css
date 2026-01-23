@@ -106,3 +106,54 @@
 .task-note-button:hover {
   background: rgba(0, 0, 0, 0.1);
 }
+
+/* ============================================
+   Slash Command Menu
+   ============================================ */
+
+.slash-command-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+}
+
+.slash-command-icon {
+  width: 20px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.slash-command-label {
+  flex: 1;
+}
+
+/* Schedule Task Modal */
+.schedule-task-modal {
+  padding: 16px;
+}
+
+.schedule-task-modal h3 {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.schedule-input-container {
+  margin: 16px 0;
+}
+
+.schedule-date-input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.schedule-btn-container {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}

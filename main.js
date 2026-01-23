@@ -695,6 +695,95 @@ ${subtasksContent}
 };
 
 // ============================================================================
+// SLASH COMMAND SUGGEST
+// ============================================================================
+
+const SLASH_COMMANDS = [
+  { id: 'complete', label: 'Mark Complete', icon: '✓', marker: 'x' },
+  { id: 'in-progress', label: 'Mark In Progress', icon: '/', marker: '/' },
+  { id: 'cancelled', label: 'Mark Cancelled', icon: '−', marker: '-' },
+  { id: 'schedule', label: 'Schedule Task', icon: '📅', action: 'schedule' }
+];
+
+class SlashCommandSuggest extends obsidian.EditorSuggest {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  onTrigger(cursor, editor, file) {
+    // Only trigger on task lines
+    const line = editor.getLine(cursor.line);
+    if (!TaskUtils.isTask(line)) return null;
+
+    // Find the "/" character before cursor
+    const lineUpToCursor = line.substring(0, cursor.ch);
+    const slashIndex = lineUpToCursor.lastIndexOf('/');
+
+    if (slashIndex === -1) return null;
+
+    // Ensure "/" is not part of a time pattern (e.g., "15:30 - 16:00")
+    const beforeSlash = lineUpToCursor.substring(0, slashIndex);
+    if (/\d$/.test(beforeSlash)) return null;
+
+    return {
+      start: { line: cursor.line, ch: slashIndex },
+      end: cursor,
+      query: lineUpToCursor.substring(slashIndex + 1).toLowerCase()
+    };
+  }
+
+  getSuggestions(context) {
+    const query = context.query.toLowerCase();
+    return SLASH_COMMANDS.filter(cmd =>
+      cmd.label.toLowerCase().includes(query) ||
+      cmd.id.includes(query)
+    );
+  }
+
+  renderSuggestion(suggestion, el) {
+    el.addClass('slash-command-item');
+    el.createSpan({ text: suggestion.icon, cls: 'slash-command-icon' });
+    el.createSpan({ text: suggestion.label, cls: 'slash-command-label' });
+  }
+
+  selectSuggestion(suggestion, evt) {
+    const { editor } = this.context;
+    const lineNum = this.context.start.line;
+    const line = editor.getLine(lineNum);
+
+    // Remove the "/" and any typed query
+    editor.replaceRange('', this.context.start, this.context.end);
+
+    // Re-read line after removal
+    const updatedLine = editor.getLine(lineNum);
+
+    if (suggestion.marker) {
+      // Change task status marker
+      const newLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, `$1${suggestion.marker}$2`);
+      editor.setLine(lineNum, newLine);
+    } else if (suggestion.action === 'schedule') {
+      this.openScheduleModal(editor, lineNum);
+    }
+  }
+
+  openScheduleModal(editor, lineNum) {
+    new ScheduleTaskModal(this.plugin.app, (date) => {
+      if (date) {
+        const line = editor.getLine(lineNum);
+        // Change to scheduled marker [>] and append date
+        let newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
+        // Add scheduled date if not present
+        if (!newLine.includes('📅')) {
+          newLine = newLine.trimEnd() + ` 📅 ${date}`;
+        }
+        editor.setLine(lineNum, newLine);
+      }
+    }).open();
+  }
+}
+
+// ============================================================================
 // UI COMPONENTS
 // ============================================================================
 
@@ -797,6 +886,61 @@ class TaskInfoModal extends obsidian.Modal {
   onClose() {
     const { contentEl } = this;
     contentEl.empty();
+  }
+}
+
+// Modal for scheduling tasks
+class ScheduleTaskModal extends obsidian.Modal {
+  constructor(app, onSubmit) {
+    super(app);
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass('schedule-task-modal');
+
+    contentEl.createEl('h3', { text: 'Schedule Task' });
+
+    const inputContainer = contentEl.createDiv({ cls: 'schedule-input-container' });
+
+    const dateInput = inputContainer.createEl('input', {
+      type: 'date',
+      cls: 'schedule-date-input'
+    });
+    dateInput.valueAsDate = new Date();
+
+    const btnContainer = contentEl.createDiv({ cls: 'schedule-btn-container' });
+
+    const submitBtn = btnContainer.createEl('button', {
+      text: 'Schedule',
+      cls: 'mod-cta'
+    });
+    submitBtn.addEventListener('click', () => {
+      this.onSubmit(dateInput.value);
+      this.close();
+    });
+
+    const cancelBtn = btnContainer.createEl('button', { text: 'Cancel' });
+    cancelBtn.addEventListener('click', () => {
+      this.onSubmit(null);
+      this.close();
+    });
+
+    // Handle Enter key
+    dateInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this.onSubmit(dateInput.value);
+        this.close();
+      }
+    });
+
+    dateInput.focus();
+  }
+
+  onClose() {
+    this.contentEl.empty();
   }
 }
 
@@ -1125,11 +1269,42 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
     this.registerEditorExtension([infoButtonPlugin]);
 
+    // Register slash command suggest
+    this.registerEditorSuggest(new SlashCommandSuggest(this.app, this));
+
     // Task notes sync state
     this.taskNoteSyncing = false;
     this.taskNoteSyncTimers = new Map();
 
-    // Register file modification event
+    // Track last cursor line for line-change detection
+    this.lastCursorLine = -1;
+
+    // Register cursor line change handler via CodeMirror extension
+    const lineChangePlugin = ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.plugin = plugin;
+        this.lastLine = -1;
+      }
+
+      update(update) {
+        if (!update.selectionSet) return;
+
+        const currentLine = update.state.doc.lineAt(update.state.selection.main.head).number - 1;
+
+        if (this.lastLine !== -1 && this.lastLine !== currentLine) {
+          // Cursor moved to a different line - process the line we just left
+          // Use setTimeout to defer processing until after the current update completes
+          const lineToProcess = this.lastLine;
+          setTimeout(() => this.plugin.processLineOnLeave(lineToProcess), 0);
+        }
+
+        this.lastLine = currentLine;
+      }
+    });
+
+    this.registerEditorExtension([lineChangePlugin]);
+
+    // Register file modification event for both task note sync and debounced full-file processing
     this.registerEvent(
       this.app.vault.on('modify', (file) => {
         if (this.isProcessing) return;
@@ -1155,18 +1330,18 @@ class TaskManagerPlugin extends obsidian.Plugin {
           return;
         }
 
-        // Handle regular task processing
+        // Handle regular task processing with 5-second debounce (safety net)
         if (!TaskUtils.shouldProcessFile(file, this.settings)) return;
 
-        // Clear existing timer
+        // Clear existing timer - resets on every keystroke
         if (this.debounceTimer) {
           clearTimeout(this.debounceTimer);
         }
 
-        // Debounce processing
+        // 5-second debounce: only fires when user stops typing for 5 seconds
         this.debounceTimer = setTimeout(() => {
           this.processFile(file);
-        }, this.settings.sortDebounceMs);
+        }, 5000);
       })
     );
 
@@ -1274,7 +1449,23 @@ class TaskManagerPlugin extends obsidian.Plugin {
     this.isProcessing = true;
 
     try {
-      let content = await this.app.vault.read(file);
+      // Check if this file is open in the active editor
+      const activeView = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+      const activeFile = this.app.workspace.getActiveFile();
+      const isActiveFile = activeView && activeFile && activeFile.path === file.path;
+
+      let content;
+      let editor;
+
+      if (isActiveFile) {
+        // Use editor API to avoid race conditions with typing
+        editor = activeView.editor;
+        content = editor.getValue();
+      } else {
+        // File not actively being edited, safe to use vault API
+        content = await this.app.vault.read(file);
+      }
+
       let modified = false;
 
       // Step 1: Assign IDs
@@ -1304,15 +1495,89 @@ class TaskManagerPlugin extends obsidian.Plugin {
         }
       }
 
-      // Single atomic write
+      // Write changes
       if (modified) {
-        await this.app.vault.modify(file, content);
+        if (isActiveFile && editor) {
+          // Use line-by-line replacement to avoid disrupting cursor/selection
+          const cursor = editor.getCursor();
+          const currentLines = editor.getValue().split('\n');
+          const newLines = content.split('\n');
+
+          // Update all lines that changed (safe because 5-second debounce ensures user stopped typing)
+          for (let i = 0; i < newLines.length; i++) {
+            if (i < currentLines.length && currentLines[i] !== newLines[i]) {
+              // For cursor line, use replaceRange to append at end without moving cursor
+              if (i === cursor.line) {
+                const oldLine = currentLines[i];
+                const newLine = newLines[i];
+                // Append the new content (ID/parent) at the end of the line
+                if (newLine.length > oldLine.length && newLine.startsWith(oldLine.trimEnd())) {
+                  const addition = newLine.slice(oldLine.trimEnd().length);
+                  editor.replaceRange(addition, { line: i, ch: oldLine.length });
+                }
+              } else {
+                editor.setLine(i, newLines[i]);
+              }
+            }
+          }
+        } else {
+          await this.app.vault.modify(file, content);
+        }
       }
     } finally {
       // Reset flag after a short delay
       setTimeout(() => {
         this.isProcessing = false;
       }, 100);
+    }
+  }
+
+  // Process a single line when cursor leaves it (add ID, parent link)
+  processLineOnLeave(lineNum) {
+    const activeView = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    if (!activeView) return;
+
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile || !TaskUtils.shouldProcessFile(activeFile, this.settings)) return;
+
+    const editor = activeView.editor;
+    const line = editor.getLine(lineNum);
+    if (!line) return;
+
+    // Only process task lines
+    if (!TaskUtils.isTask(line)) return;
+
+    let newLine = line;
+    let modified = false;
+
+    // Add ID if missing
+    if (this.settings.enableTaskIds && !TaskUtils.extractId(line)) {
+      newLine = TaskUtils.addId(newLine, TaskUtils.generateId(this.settings));
+      modified = true;
+    }
+
+    // Add parent link if this is a subtask
+    if (this.settings.enableParentChildLinking && TaskUtils.isSubtask(line)) {
+      // Find parent task (look backwards for a non-indented task)
+      let parentId = null;
+      for (let i = lineNum - 1; i >= 0; i--) {
+        const prevLine = editor.getLine(i);
+        if (TaskUtils.isParentTask(prevLine)) {
+          parentId = TaskUtils.extractId(prevLine);
+          break;
+        }
+      }
+
+      if (parentId && !TaskUtils.extractParentId(newLine)) {
+        newLine = TaskUtils.addParentId(newLine, parentId);
+        modified = true;
+      }
+    }
+
+    if (modified) {
+      this.isProcessing = true;
+      editor.setLine(lineNum, newLine);
+      setTimeout(() => { this.isProcessing = false; }, 50);
     }
   }
 
