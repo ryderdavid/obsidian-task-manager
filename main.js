@@ -408,8 +408,10 @@ const TaskNoteManager = {
     // Remove button icons
     text = text.replace(/📝/g, '');
     text = text.replace(/🔗/g, '');
-    // Remove inline fields
+    // Remove inline fields (dataview style)
     text = text.replace(/\s*\[[^\]]+::[^\]]*\]/g, '');
+    // Remove schedule tags [> DATE] and [< DATE]
+    text = text.replace(/\s*\[[<>]\s*\d{4}-\d{2}-\d{2}\]/g, '');
     // Clean up whitespace
     text = text.replace(/\s+/g, ' ').trim();
     return text;
@@ -425,7 +427,8 @@ const TaskNoteManager = {
   },
 
   extractTaskTextFromLine(line) {
-    const taskMatch = line.match(/^- \[[ x]\]\s*(.+)$/);
+    // Match any task marker (space, x, >, /, -, etc.)
+    const taskMatch = line.match(/^- \[.\]\s*(.+)$/);
     if (!taskMatch) return null;
     return this.cleanTaskText(taskMatch[1]);
   },
@@ -702,6 +705,9 @@ const TaskScheduler = {
   // Remove existing scheduling tags from a line
   removeSchedulingTags(line) {
     return line
+      .replace(/\s*\[<\s*\d{4}-\d{2}-\d{2}\]/g, '')
+      .replace(/\s*\[>\s*\d{4}-\d{2}-\d{2}\]/g, '')
+      // Legacy format cleanup
       .replace(/\s*\[sch_from::[^\]]+\]/g, '')
       .replace(/\s*\[sch_to::[^\]]+\]/g, '')
       .replace(/\s*📅\s*\[\[[^\]]+\]\]/g, '')
@@ -730,8 +736,8 @@ const TaskScheduler = {
     // Keep the task ID (same task, different date)
     // Remove parent tags (will be re-linked if needed)
     taskCopy = taskCopy.replace(/\s*\[parent::\s*[^\]]+\]/g, '');
-    // Add sch_from tag
-    taskCopy = taskCopy.trimEnd() + ` [sch_from::${fromDate}]`;
+    // Add sch_from tag: [< YYYY-MM-DD]
+    taskCopy = taskCopy.trimEnd() + ` [< ${fromDate}]`;
     return taskCopy;
   },
 
@@ -739,10 +745,12 @@ const TaskScheduler = {
   markTaskAsScheduled(line, toDate) {
     // Change marker to [>]
     let newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
+    // Remove time block (e.g., "13:45 - 15:15 " at start of task text)
+    newLine = newLine.replace(/^([\t]*- \[.\]\s*)\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*/, '$1');
     // Remove any existing scheduling tags
     newLine = this.removeSchedulingTags(newLine);
-    // Add sch_to tag
-    newLine = newLine.trimEnd() + ` [sch_to::${toDate}]`;
+    // Add sch_to tag: [> YYYY-MM-DD]
+    newLine = newLine.trimEnd() + ` [> ${toDate}]`;
     return newLine;
   },
 
@@ -756,7 +764,7 @@ const TaskScheduler = {
     }
 
     // Check if already scheduled to this date
-    if (line.includes(`[sch_to::${targetDate}]`)) {
+    if (line.includes(`[> ${targetDate}]`)) {
       new obsidian.Notice('Task already scheduled to this date');
       return false;
     }
@@ -1188,6 +1196,90 @@ class TaskNoteButtonWidget extends WidgetType {
   }
 }
 
+// Widget for scheduled-to pill [> YYYY-MM-DD]
+class ScheduledToPillWidget extends WidgetType {
+  constructor(date, plugin) {
+    super();
+    this.date = date;
+    this.plugin = plugin;
+  }
+
+  toDOM() {
+    const pill = document.createElement('span');
+    pill.className = 'schedule-pill schedule-pill-to';
+    pill.textContent = `→ ${this.date}`;
+    pill.setAttribute('aria-label', `Go to ${this.date}`);
+    pill.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await this.navigateToDate();
+    });
+    return pill;
+  }
+
+  async navigateToDate() {
+    const path = TaskScheduler.getDailyNotePath(this.date, this.plugin.settings);
+    let file = this.plugin.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+      // Create if doesn't exist
+      file = await this.plugin.app.vault.create(path, '');
+    }
+    if (file instanceof obsidian.TFile) {
+      await this.plugin.app.workspace.getLeaf().openFile(file);
+    }
+  }
+
+  eq(other) {
+    return other.date === this.date;
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
+// Widget for scheduled-from pill [< YYYY-MM-DD]
+class ScheduledFromPillWidget extends WidgetType {
+  constructor(date, plugin) {
+    super();
+    this.date = date;
+    this.plugin = plugin;
+  }
+
+  toDOM() {
+    const pill = document.createElement('span');
+    pill.className = 'schedule-pill schedule-pill-from';
+    pill.textContent = `← ${this.date}`;
+    pill.setAttribute('aria-label', `Go to ${this.date}`);
+    pill.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await this.navigateToDate();
+    });
+    return pill;
+  }
+
+  async navigateToDate() {
+    const path = TaskScheduler.getDailyNotePath(this.date, this.plugin.settings);
+    let file = this.plugin.app.vault.getAbstractFileByPath(path);
+    if (!file) {
+      // Create if doesn't exist
+      file = await this.plugin.app.vault.create(path, '');
+    }
+    if (file instanceof obsidian.TFile) {
+      await this.plugin.app.workspace.getLeaf().openFile(file);
+    }
+  }
+
+  eq(other) {
+    return other.date === this.date;
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
 // Modal for displaying task metadata
 class TaskInfoModal extends obsidian.Modal {
   constructor(app, taskId, parentId, taskText, parentText, onUnlink) {
@@ -1495,7 +1587,13 @@ class TaskManagerPlugin extends obsidian.Plugin {
           const decorations = [];
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
-          const metadataPattern = /\s*\[(?:id|parent)::[^\]]+\]/g;
+          const metadataPattern = /\s*\[(?:id|parent)::\s*[^\]]+\]/g;
+          // Schedule tag patterns: [> YYYY-MM-DD] and [< YYYY-MM-DD]
+          const scheduleToPattern = /\s*\[>\s*(\d{4}-\d{2}-\d{2})\]/g;
+          const scheduleFromPattern = /\s*\[<\s*(\d{4}-\d{2}-\d{2})\]/g;
+          // Legacy patterns
+          const legacyScheduleToPattern = /\s*\[sch_to::([^\]]+)\]/g;
+          const legacyScheduleFromPattern = /\s*\[sch_from::([^\]]+)\]/g;
 
           // Check if we're in the task notes folder (skip task note buttons there)
           const activeFile = plugin.app.workspace.getActiveFile();
@@ -1525,6 +1623,98 @@ class TaskManagerPlugin extends obsidian.Plugin {
                       value: Decoration.replace({})
                     });
                   }
+                }
+
+                // Handle schedule-to tags [> YYYY-MM-DD]
+                let scheduleToMatch;
+                scheduleToPattern.lastIndex = 0;
+                while ((scheduleToMatch = scheduleToPattern.exec(lineText)) !== null) {
+                  const start = line.from + scheduleToMatch.index;
+                  const end = start + scheduleToMatch[0].length;
+                  const date = scheduleToMatch[1];
+                  // Hide the raw tag
+                  decorations.push({
+                    from: start,
+                    to: end,
+                    value: Decoration.replace({})
+                  });
+                  // Add pill widget at end of line
+                  decorations.push({
+                    from: line.to,
+                    to: line.to,
+                    value: Decoration.widget({
+                      widget: new ScheduledToPillWidget(date, plugin),
+                      side: 0
+                    })
+                  });
+                }
+
+                // Handle schedule-from tags [< YYYY-MM-DD]
+                let scheduleFromMatch;
+                scheduleFromPattern.lastIndex = 0;
+                while ((scheduleFromMatch = scheduleFromPattern.exec(lineText)) !== null) {
+                  const start = line.from + scheduleFromMatch.index;
+                  const end = start + scheduleFromMatch[0].length;
+                  const date = scheduleFromMatch[1];
+                  // Hide the raw tag
+                  decorations.push({
+                    from: start,
+                    to: end,
+                    value: Decoration.replace({})
+                  });
+                  // Add pill widget at end of line
+                  decorations.push({
+                    from: line.to,
+                    to: line.to,
+                    value: Decoration.widget({
+                      widget: new ScheduledFromPillWidget(date, plugin),
+                      side: 0
+                    })
+                  });
+                }
+
+                // Handle legacy schedule-to tags [sch_to::DATE]
+                let legacyToMatch;
+                legacyScheduleToPattern.lastIndex = 0;
+                while ((legacyToMatch = legacyScheduleToPattern.exec(lineText)) !== null) {
+                  const start = line.from + legacyToMatch.index;
+                  const end = start + legacyToMatch[0].length;
+                  const date = legacyToMatch[1];
+                  decorations.push({
+                    from: start,
+                    to: end,
+                    value: Decoration.replace({})
+                  });
+                  decorations.push({
+                    from: line.to,
+                    to: line.to,
+                    value: Decoration.widget({
+                      widget: new ScheduledToPillWidget(date, plugin),
+                      side: 0
+                    })
+                  });
+                }
+
+                // Handle legacy schedule-from tags [sch_from::DATE]
+                let legacyFromMatch;
+                legacyScheduleFromPattern.lastIndex = 0;
+                while ((legacyFromMatch = legacyScheduleFromPattern.exec(lineText)) !== null) {
+                  const start = line.from + legacyFromMatch.index;
+                  const end = start + legacyFromMatch[0].length;
+                  const date = legacyFromMatch[1];
+                  decorations.push({
+                    from: start,
+                    to: end,
+                    value: Decoration.replace({})
+                  });
+                  decorations.push({
+                    from: line.to,
+                    to: line.to,
+                    value: Decoration.widget({
+                      widget: new ScheduledFromPillWidget(date, plugin),
+                      side: 0
+                    })
+                  });
                 }
 
                 // Add task note button for parent tasks (not in task notes folder)

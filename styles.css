@@ -107,6 +107,39 @@
   background: rgba(0, 0, 0, 0.1);
 }
 
+/* Schedule tag pills */
+.schedule-pill {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border-radius: 14px;
+  font-size: 0.85em;
+  font-weight: 400;
+  user-select: none;
+  display: inline-block;
+  white-space: nowrap;
+  vertical-align: baseline;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.schedule-pill-to {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--text-accent);
+}
+
+.schedule-pill-to:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+
+.schedule-pill-from {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--color-green);
+}
+
+.schedule-pill-from:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+
 /* ============================================
    Slash Command Menu
    ============================================ */
