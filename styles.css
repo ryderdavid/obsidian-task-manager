@@ -106,3 +106,70 @@
 .task-note-button:hover {
   background: rgba(0, 0, 0, 0.1);
 }
+
+/* ============================================
+   Custom Task Checkbox Icons
+   Overrides AnuPpuccin theme defaults
+   Icons from Font Awesome Free 6.7.2 (CC BY 4.0)
+   ============================================ */
+
+/* Base checkbox - Unchecked [ ] uses fa-regular fa-circle */
+.task-list-item-checkbox {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M464 256A208 208 0 1 0 48 256a208 208 0 1 0 416 0zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M464 256A208 208 0 1 0 48 256a208 208 0 1 0 416 0zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+/* Completed [x] - fa-solid fa-circle-check */
+[data-task=x] > input[type=checkbox]:checked,
+[data-task=x] > p > input[type=checkbox]:checked,
+[data-task=x][type=checkbox]:checked {
+  --checkbox-color: rgb(var(--ctp-green));
+  --checkbox-color-hover: rgb(var(--ctp-green));
+  border-width: 0 !important;
+}
+[data-task=x] > input[type=checkbox]:checked:after,
+[data-task=x] > p > input[type=checkbox]:checked:after,
+[data-task=x][type=checkbox]:checked:after {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM369 209L241 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  background-color: rgb(var(--ctp-green));
+  left: 0px;
+}
+
+/* Forwarded/Scheduled [>] - fa-regular fa-circle-right */
+[data-task=">"] > input[type=checkbox]:checked,
+[data-task=">"] > p > input[type=checkbox]:checked,
+[data-task=">"][type=checkbox]:checked {
+  --checkbox-color: transparent;
+  --checkbox-color-hover: transparent;
+  border-width: 0 !important;
+}
+[data-task=">"] > input[type=checkbox]:checked:after,
+[data-task=">"] > p > input[type=checkbox]:checked:after,
+[data-task=">"][type=checkbox]:checked:after {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M464 256A208 208 0 1 1 48 256a208 208 0 1 1 416 0zM0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zM294.6 151.2c-4.2-4.6-10.1-7.2-16.4-7.2C266 144 256 154 256 166.3l0 41.7-96 0c-17.7 0-32 14.3-32 32l0 32c0 17.7 14.3 32 32 32l96 0 0 41.7c0 12.3 10 22.3 22.3 22.3c6.2 0 12.1-2.6 16.4-7.2l84-91c3.5-3.8 5.4-8.7 5.4-13.9s-1.9-10.1-5.4-13.9l-84-91z'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  background-color: rgb(var(--ctp-sapphire));
+  left: 0px;
+}
+
+/* In Progress [/] - fa-solid fa-circle-half-stroke */
+[data-task="/"] > input[type=checkbox]:checked,
+[data-task="/"] > p > input[type=checkbox]:checked,
+[data-task="/"][type=checkbox]:checked {
+  --checkbox-color: transparent;
+  --checkbox-color-hover: transparent;
+  border-width: 0 !important;
+}
+[data-task="/"] > input[type=checkbox]:checked:after,
+[data-task="/"] > p > input[type=checkbox]:checked:after,
+[data-task="/"][type=checkbox]:checked:after {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M448 256c0-106-86-192-192-192l0 384c106 0 192-86 192-192zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z'/%3E%3C/svg%3E");
+  -webkit-mask-size: contain;
+  background-color: rgb(var(--ctp-yellow));
+  left: 0px;
+}
