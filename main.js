@@ -166,13 +166,11 @@ const IcsEventSync = {
   },
 
   // Build a calendar event line from ICS event data
+  // ICS plugin returns: { time, endTime, summary, location, callUrl, utime, icsName, ... }
   buildEventLine(event, settings) {
-    const startDate = event.start;
-    const endDate = event.end;
-
-    // Format times
-    const startTime = this.formatTime(startDate.getHours(), startDate.getMinutes());
-    const endTime = this.formatTime(endDate.getHours(), endDate.getMinutes());
+    // ICS plugin already formats times as strings like "10:00"
+    const startTime = event.time || '00:00';
+    const endTime = event.endTime || startTime;
 
     // Build event text - include location and URL if present
     let text = event.summary || 'Untitled Event';
@@ -184,8 +182,12 @@ const IcsEventSync = {
       text += ` ${event.callUrl}`;
     }
 
-    // Build the line with UID
-    return `- [c] ${startTime} - ${endTime} ${text} [uid::${event.uid}]`;
+    // Generate a stable ID from event properties (ICS plugin doesn't expose raw UID)
+    // Use utime + summary hash as a pseudo-UID for matching
+    const pseudoUid = `${event.utime}-${(event.summary || '').substring(0, 20).replace(/[^a-zA-Z0-9]/g, '')}`;
+
+    // Build the line with pseudo-UID
+    return `- [c] ${startTime} - ${endTime} ${text} [uid::${pseudoUid}]`;
   },
 
   // Check if a file is a daily note for a specific date
@@ -260,27 +262,18 @@ const IcsEventSync = {
 
     // Build new calendar events list
     const newCalendarLines = [];
-    const processedUids = new Set();
 
     for (const event of icsEvents) {
-      if (!event.uid) continue;
-
-      processedUids.add(event.uid);
-
       // Always use fresh data from ICS (overwrite)
       const newLine = this.buildEventLine(event, settings);
       newCalendarLines.push({
         line: newLine,
-        startHour: event.start.getHours(),
-        startMinute: event.start.getMinutes()
+        utime: event.utime || 0  // Use utime for sorting
       });
     }
 
-    // Sort calendar events by start time
-    newCalendarLines.sort((a, b) => {
-      if (a.startHour !== b.startHour) return a.startHour - b.startHour;
-      return a.startMinute - b.startMinute;
-    });
+    // Sort calendar events by start time (using utime from ICS plugin)
+    newCalendarLines.sort((a, b) => a.utime - b.utime);
 
     // Find where to insert calendar events (at the top of the file, before tasks)
     // Strategy: calendar events go at the very top
@@ -2067,15 +2060,15 @@ class TaskDecorationsWidget extends WidgetType {
     }
 
     // Add info button if enabled
-    if (this.options.showInfoButton && (this.options.taskId || this.options.parentId)) {
+    if (this.options.showInfoButton && (this.options.taskId || this.options.parentId || this.options.uid)) {
       const btn = document.createElement('span');
       btn.className = 'task-info-button';
       btn.textContent = '\u24D8'; // ⓘ
-      btn.title = 'Task info';
+      btn.title = this.options.isCalendarEvent ? 'Event info' : 'Task info';
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.plugin.showTaskInfo(this.options.taskId, this.options.parentId, this.options.taskText);
+        this.plugin.showTaskInfo(this.options.taskId, this.options.parentId, this.options.taskText, null, null, this.options.uid, this.options.isCalendarEvent);
       });
       container.appendChild(btn);
     }
@@ -2099,6 +2092,8 @@ class TaskDecorationsWidget extends WidgetType {
       other.options.taskText === this.options.taskText &&
       other.options.taskId === this.options.taskId &&
       other.options.parentId === this.options.parentId &&
+      other.options.uid === this.options.uid &&
+      other.options.isCalendarEvent === this.options.isCalendarEvent &&
       JSON.stringify(other.options.scheduleToDates) === JSON.stringify(this.options.scheduleToDates) &&
       JSON.stringify(other.options.scheduleFromDates) === JSON.stringify(this.options.scheduleFromDates) &&
       other.options.showInfoButton === this.options.showInfoButton &&
@@ -2659,8 +2654,10 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
                 // Determine what to show in the unified container
                 const taskText = TaskNoteManager.extractTaskTextFromLine(lineText);
+                const isCalendarEvent = TaskUtils.isCalendarEvent(lineText);
+                const uid = isCalendarEvent ? IcsEventSync.extractUid(lineText) : null;
                 const showNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
-                const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId);
+                const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
                 const hasSchedulePills = scheduleToDates.length > 0 || scheduleFromDates.length > 0;
 
                 // Add unified container widget if there's anything to show
@@ -2673,6 +2670,8 @@ class TaskManagerPlugin extends obsidian.Plugin {
                         taskText: taskText,
                         taskId: taskId,
                         parentId: parentId,
+                        uid: uid,
+                        isCalendarEvent: isCalendarEvent,
                         scheduleToDates: scheduleToDates.length > 0 ? scheduleToDates : null,
                         scheduleFromDates: scheduleFromDates.length > 0 ? scheduleFromDates : null,
                         showInfoButton: showInfoButton,
@@ -3031,8 +3030,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
     const line = editor.getLine(lineNum);
     if (!line) return;
 
-    // Only process task lines
+    // Only process task lines (but NOT calendar events)
     if (!TaskUtils.isTask(line)) return;
+    if (TaskUtils.isCalendarEvent(line)) return;
 
     let newLine = line;
     let modified = false;
@@ -3068,7 +3068,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
     }
   }
 
-  showTaskInfo(taskId, parentId, taskText, editor, lineNum) {
+  showTaskInfo(taskId, parentId, taskText, editor, lineNum, uid, isCalendarEvent) {
     // Find parent task text by ID if we have a parentId
     let parentText = null;
     if (parentId) {
@@ -3097,7 +3097,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
         editor.setLine(lineNum, newLine);
         new obsidian.Notice('Task unlinked from parent');
       }
-    });
+    }, uid, isCalendarEvent);
     modal.open();
   }
 }
