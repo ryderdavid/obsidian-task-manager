@@ -32,7 +32,10 @@ const DEFAULT_SETTINGS = {
 
   // Task Notes
   enableTaskNotes: true,
-  taskNotesFolder: 'Task Notes'
+  taskNotesFolder: 'Task Notes',
+
+  // ICS Calendar Sync
+  enableIcsSync: true
 };
 
 // ============================================================================
@@ -46,7 +49,7 @@ const TaskUtils = {
   SUBTASK_PATTERN: /^\t+- \[.\]/,
   ID_PATTERN: /\[id::([^\]]+)\]/,
   PARENT_ID_PATTERN: /\[parent::([^\]]+)\]/,
-  METADATA_PATTERN: /\s*\[(?:id|parent)::[^\]]+\]/g,
+  METADATA_PATTERN: /\s*\[(?:id|parent|uid)::[^\]]+\]/g,
   COMPLETED_PATTERN: /^[\t]*- \[[xX]\]/,
   TIMEBLOCK_PATTERN: /^- \[.\]\s*(\d{2}):(\d{2}) - (\d{2}):(\d{2})/,
   CALENDAR_EVENT_PATTERN: /^[\t]*- \[c\]/,
@@ -125,6 +128,174 @@ const TaskUtils = {
   shouldProcessFile(file, settings) {
     if (file.extension !== 'md') return false;
     return settings.targetFolders.some(folder => file.path.includes(folder));
+  }
+};
+
+// ============================================================================
+// ICS CALENDAR EVENT SYNC MODULE
+// ============================================================================
+
+const IcsEventSync = {
+  // Pattern to extract UID from calendar event line
+  UID_PATTERN: /\[uid::([^\]]+)\]/,
+
+  // Extract UID from a calendar event line
+  extractUid(line) {
+    const match = line.match(this.UID_PATTERN);
+    return match ? match[1].trim() : null;
+  },
+
+  // Parse a calendar event line into components
+  parseEventLine(line) {
+    // Match: - [c] HH:MM - HH:MM Event text [uid::xxx]
+    const match = line.match(/^- \[c\]\s*(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})\s+(.+?)(?:\s*\[uid::[^\]]+\])?\s*$/);
+    if (!match) return null;
+    return {
+      startHour: parseInt(match[1]),
+      startMinute: parseInt(match[2]),
+      endHour: parseInt(match[3]),
+      endMinute: parseInt(match[4]),
+      text: match[5].trim(),
+      uid: this.extractUid(line)
+    };
+  },
+
+  // Format time as HH:MM
+  formatTime(hour, minute) {
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  },
+
+  // Build a calendar event line from ICS event data
+  buildEventLine(event, settings) {
+    const startDate = event.start;
+    const endDate = event.end;
+
+    // Format times
+    const startTime = this.formatTime(startDate.getHours(), startDate.getMinutes());
+    const endTime = this.formatTime(endDate.getHours(), endDate.getMinutes());
+
+    // Build event text - include location and URL if present
+    let text = event.summary || 'Untitled Event';
+    if (event.location) {
+      text += ` ${event.location}`;
+    }
+    // Add video call URL if present
+    if (event.callUrl) {
+      text += ` ${event.callUrl}`;
+    }
+
+    // Build the line with UID
+    return `- [c] ${startTime} - ${endTime} ${text} [uid::${event.uid}]`;
+  },
+
+  // Check if a file is a daily note for a specific date
+  getDailyNoteDate(file, settings) {
+    // Check if file is in target folders
+    if (!TaskUtils.shouldProcessFile(file, settings)) return null;
+
+    // Try to parse date from filename (YYYY-MM-DD.md)
+    const match = file.basename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+
+    return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+  },
+
+  // Get events from ICS plugin for a specific date
+  async getIcsEvents(app, date) {
+    try {
+      const icsPlugin = app.plugins.getPlugin('ics');
+      if (!icsPlugin || !icsPlugin.getEvents) {
+        return null; // ICS plugin not available
+      }
+
+      // ICS plugin expects a moment object
+      const moment = window.moment;
+      if (!moment) return null;
+
+      const events = await icsPlugin.getEvents(moment(date));
+      return events;
+    } catch (e) {
+      console.error('Task Manager: Error fetching ICS events', e);
+      return null;
+    }
+  },
+
+  // Sync ICS events into a daily note
+  async syncEventsToNote(app, file, settings) {
+    const noteDate = this.getDailyNoteDate(file, settings);
+    if (!noteDate) return false;
+
+    // Get ICS events for this date
+    const icsEvents = await this.getIcsEvents(app, noteDate);
+    if (!icsEvents || icsEvents.length === 0) {
+      // No events to sync - but we should still remove stale events
+      // For now, return false if no ICS events
+      return false;
+    }
+
+    // Read current file content
+    const content = await app.vault.read(file);
+    const lines = content.split('\n');
+
+    // Separate calendar events from other content
+    const calendarLines = [];
+    const otherLines = [];
+
+    for (const line of lines) {
+      if (TaskUtils.isCalendarEvent(line)) {
+        calendarLines.push(line);
+      } else {
+        otherLines.push(line);
+      }
+    }
+
+    // Build a map of existing events by UID
+    const existingByUid = new Map();
+    for (const line of calendarLines) {
+      const uid = this.extractUid(line);
+      if (uid) {
+        existingByUid.set(uid, line);
+      }
+    }
+
+    // Build new calendar events list
+    const newCalendarLines = [];
+    const processedUids = new Set();
+
+    for (const event of icsEvents) {
+      if (!event.uid) continue;
+
+      processedUids.add(event.uid);
+
+      // Always use fresh data from ICS (overwrite)
+      const newLine = this.buildEventLine(event, settings);
+      newCalendarLines.push({
+        line: newLine,
+        startHour: event.start.getHours(),
+        startMinute: event.start.getMinutes()
+      });
+    }
+
+    // Sort calendar events by start time
+    newCalendarLines.sort((a, b) => {
+      if (a.startHour !== b.startHour) return a.startHour - b.startHour;
+      return a.startMinute - b.startMinute;
+    });
+
+    // Find where to insert calendar events (at the top of the file, before tasks)
+    // Strategy: calendar events go at the very top
+    const sortedEventLines = newCalendarLines.map(e => e.line);
+
+    // Rebuild file: calendar events first, then everything else
+    const newContent = [...sortedEventLines, ...otherLines].join('\n');
+
+    // Only write if content changed
+    if (newContent !== content) {
+      await app.vault.modify(file, newContent);
+      return true;
+    }
+
+    return false;
   }
 };
 
@@ -1123,6 +1294,377 @@ const Icons = {
 };
 
 // ============================================================================
+// TIMEBLOCK UTILITIES
+// ============================================================================
+
+const TimeblockUtils = {
+  // Extract existing timeblock from a task line (format: "HH:MM - HH:MM" at start)
+  extractTimeblock(line) {
+    const match = line.match(/^([\t]*- \[.\]\s*)(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})\s*/);
+    if (match) {
+      return {
+        prefix: match[1],
+        startHour: parseInt(match[2]),
+        startMinute: parseInt(match[3]),
+        endHour: parseInt(match[4]),
+        endMinute: parseInt(match[5]),
+        fullMatch: match[0]
+      };
+    }
+    return null;
+  },
+
+  // Format time as HH:MM
+  formatTime(hour, minute) {
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  },
+
+  // Format time for display (e.g., "9 AM", "12 PM")
+  formatDisplayTime(hour) {
+    if (hour === 0) return '12 AM';
+    if (hour === 12) return '12 PM';
+    if (hour < 12) return `${hour} AM`;
+    return `${hour - 12} PM`;
+  },
+
+  // Add timeblock to a task line
+  addTimeblock(line, startHour, startMinute, endHour, endMinute) {
+    const existing = this.extractTimeblock(line);
+    const timeblock = `${this.formatTime(startHour, startMinute)} - ${this.formatTime(endHour, endMinute)} `;
+
+    if (existing) {
+      // Replace existing timeblock
+      return line.replace(existing.fullMatch, existing.prefix + timeblock);
+    } else {
+      // Insert after the task marker "- [x] "
+      return line.replace(/^([\t]*- \[.\]\s*)/, `$1${timeblock}`);
+    }
+  },
+
+  // Remove timeblock from a task line
+  removeTimeblock(line) {
+    return line.replace(/^([\t]*- \[.\]\s*)\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*/, '$1');
+  },
+
+  // Calculate default end time (start + 30 minutes)
+  getDefaultEndTime(startHour, startMinute) {
+    let endMinute = startMinute + 30;
+    let endHour = startHour;
+    if (endMinute >= 60) {
+      endMinute -= 60;
+      endHour = (endHour + 1) % 24;
+    }
+    return { hour: endHour, minute: endMinute };
+  }
+};
+
+// ============================================================================
+// TIME PICKER POPUP
+// ============================================================================
+
+class TimePickerPopup {
+  constructor(plugin, editor, lineNum, mode, existingStart = null, onComplete = null) {
+    this.plugin = plugin;
+    this.editor = editor;
+    this.lineNum = lineNum;
+    this.mode = mode; // 'start' or 'end'
+    this.existingStart = existingStart; // { hour, minute } for end mode
+    this.onComplete = onComplete; // Callback for chaining start->end
+    this.selectedHour = null;
+    this.selectedMinute = 0; // Default to :00
+    this.container = null;
+    this.minuteSelector = null;
+
+    this.handleKeyDown = this.handleKeyDown.bind(this);
+    this.handleClickOutside = this.handleClickOutside.bind(this);
+  }
+
+  open() {
+    this.container = document.createElement('div');
+    this.container.className = 'timeblock-picker-popup';
+
+    this.render();
+    this.positionPopup();
+
+    document.body.appendChild(this.container);
+
+    document.addEventListener('keydown', this.handleKeyDown, true);
+    setTimeout(() => {
+      document.addEventListener('click', this.handleClickOutside);
+    }, 10);
+  }
+
+  close() {
+    if (this.container) {
+      this.container.remove();
+      this.container = null;
+    }
+    document.removeEventListener('keydown', this.handleKeyDown, true);
+    document.removeEventListener('click', this.handleClickOutside);
+  }
+
+  render() {
+    this.container.empty();
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'timeblock-picker-header';
+    header.textContent = this.mode === 'start' ? 'Start' : 'End';
+    this.container.appendChild(header);
+
+    // If in end mode, show selected start time
+    if (this.mode === 'end' && this.existingStart) {
+      const startInfo = document.createElement('div');
+      startInfo.className = 'timeblock-picker-start-info';
+      startInfo.textContent = `Start: ${TimeblockUtils.formatTime(this.existingStart.hour, this.existingStart.minute)}`;
+      this.container.appendChild(startInfo);
+    }
+
+    // Column container
+    const columns = document.createElement('div');
+    columns.className = 'timeblock-picker-columns';
+
+    // DAY column (6 AM - 5 PM)
+    const dayColumn = this.createColumn('DAY', 6, 17);
+    columns.appendChild(dayColumn);
+
+    // NIGHT column (6 PM - 5 AM)
+    const nightColumn = this.createColumn('NIGHT', 18, 29); // 18-23 and 0-5
+    columns.appendChild(nightColumn);
+
+    this.container.appendChild(columns);
+
+    // Minute selector (appears after hour is selected)
+    if (this.selectedHour !== null) {
+      this.renderMinuteSelector();
+    }
+  }
+
+  createColumn(title, startHour, endHour) {
+    const column = document.createElement('div');
+    column.className = 'timeblock-picker-column';
+
+    const header = document.createElement('div');
+    header.className = 'timeblock-picker-column-header';
+    header.textContent = title;
+    column.appendChild(header);
+
+    for (let h = startHour; h <= endHour; h++) {
+      const hour = h % 24;
+      const item = document.createElement('div');
+      item.className = 'timeblock-picker-hour';
+      if (this.selectedHour === hour) {
+        item.addClass('is-selected');
+      }
+
+      // Highlight suggested time in end mode
+      if (this.mode === 'end' && this.existingStart) {
+        const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
+        if (hour === defaultEnd.hour) {
+          item.addClass('is-suggested');
+        }
+      }
+
+      item.textContent = TimeblockUtils.formatDisplayTime(hour);
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectHour(hour);
+      });
+      column.appendChild(item);
+    }
+
+    return column;
+  }
+
+  renderMinuteSelector() {
+    if (this.minuteSelector) {
+      this.minuteSelector.remove();
+    }
+
+    this.minuteSelector = document.createElement('div');
+    this.minuteSelector.className = 'timeblock-picker-minutes';
+
+    const label = document.createElement('div');
+    label.className = 'timeblock-picker-minute-label';
+    label.textContent = `${TimeblockUtils.formatDisplayTime(this.selectedHour)} :`;
+    this.minuteSelector.appendChild(label);
+
+    const minuteOptions = document.createElement('div');
+    minuteOptions.className = 'timeblock-picker-minute-options';
+
+    // 15-minute intervals: 00, 15, 30, 45
+    for (const minute of [0, 15, 30, 45]) {
+      const btn = document.createElement('button');
+      btn.className = 'timeblock-picker-minute-btn';
+      if (this.selectedMinute === minute) {
+        btn.addClass('is-selected');
+      }
+
+      // In end mode, highlight the suggested minute
+      if (this.mode === 'end' && this.existingStart) {
+        const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
+        if (this.selectedHour === defaultEnd.hour && minute === defaultEnd.minute) {
+          btn.addClass('is-suggested');
+        }
+      }
+
+      btn.textContent = minute.toString().padStart(2, '0');
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.selectMinute(minute);
+      });
+      minuteOptions.appendChild(btn);
+    }
+
+    this.minuteSelector.appendChild(minuteOptions);
+    this.container.appendChild(this.minuteSelector);
+  }
+
+  selectHour(hour) {
+    this.selectedHour = hour;
+
+    // In end mode, default to suggested minute if this is the suggested hour
+    if (this.mode === 'end' && this.existingStart) {
+      const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
+      if (hour === defaultEnd.hour) {
+        this.selectedMinute = defaultEnd.minute;
+      } else {
+        this.selectedMinute = 0;
+      }
+    } else {
+      this.selectedMinute = 0;
+    }
+
+    this.render();
+  }
+
+  selectMinute(minute) {
+    this.selectedMinute = minute;
+    this.confirm();
+  }
+
+  confirm() {
+    if (this.selectedHour === null) return;
+
+    this.close();
+
+    if (this.mode === 'start') {
+      // Open end time picker
+      const endPopup = new TimePickerPopup(
+        this.plugin,
+        this.editor,
+        this.lineNum,
+        'end',
+        { hour: this.selectedHour, minute: this.selectedMinute },
+        (endHour, endMinute) => {
+          this.applyTimeblock(this.selectedHour, this.selectedMinute, endHour, endMinute);
+        }
+      );
+      endPopup.open();
+    } else if (this.mode === 'end' && this.onComplete) {
+      this.onComplete(this.selectedHour, this.selectedMinute);
+    }
+  }
+
+  applyTimeblock(startHour, startMinute, endHour, endMinute) {
+    const line = this.editor.getLine(this.lineNum);
+    const newLine = TimeblockUtils.addTimeblock(line, startHour, startMinute, endHour, endMinute);
+    this.editor.setLine(this.lineNum, newLine);
+    new obsidian.Notice(`Timeblock set: ${TimeblockUtils.formatTime(startHour, startMinute)} - ${TimeblockUtils.formatTime(endHour, endMinute)}`);
+  }
+
+  positionPopup() {
+    const view = this.plugin.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    if (!view) return;
+
+    const cm = view.editor.cm;
+    if (!cm) return;
+
+    const cursor = this.editor.getCursor();
+    const coords = cm.coordsAtPos(cm.state.doc.line(cursor.line + 1).from);
+
+    if (coords) {
+      this.container.style.position = 'absolute';
+      this.container.style.left = `${coords.left}px`;
+      this.container.style.top = `${coords.bottom + 5}px`;
+      this.container.style.zIndex = '1000';
+    }
+  }
+
+  handleKeyDown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      this.close();
+    } else if (e.key === 'Enter' && this.selectedHour !== null) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.confirm();
+    }
+  }
+
+  handleClickOutside(e) {
+    if (this.container && !this.container.contains(e.target)) {
+      this.close();
+    }
+  }
+}
+
+// ============================================================================
+// TIMEBLOCK SHORTCUT SUGGEST (^ triggers TimePickerPopup)
+// ============================================================================
+
+class TimeblockShortcutSuggest extends obsidian.EditorSuggest {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+  }
+
+  onTrigger(cursor, editor, file) {
+    // Only trigger on task lines
+    const line = editor.getLine(cursor.line);
+    if (!TaskUtils.isTask(line)) return null;
+
+    // Find the "^" character before cursor
+    const lineUpToCursor = line.substring(0, cursor.ch);
+    const triggerIndex = lineUpToCursor.lastIndexOf('^');
+
+    if (triggerIndex === -1) return null;
+
+    // Don't trigger if at start of line
+    if (triggerIndex === 0) return null;
+
+    const beforeTrigger = lineUpToCursor.substring(0, triggerIndex);
+    // Don't trigger if preceded by another ^
+    if (beforeTrigger.endsWith('^')) return null;
+
+    // Remove the "^" character
+    const start = { line: cursor.line, ch: triggerIndex };
+    const end = cursor;
+    editor.replaceRange('', start, end);
+
+    // Check for existing timeblock to pre-populate
+    const existingTimeblock = TimeblockUtils.extractTimeblock(line);
+
+    // Open the time picker popup
+    const popup = new TimePickerPopup(this.plugin, editor, cursor.line, 'start');
+    popup.open();
+
+    return null;
+  }
+
+  getSuggestions(context) {
+    return [];
+  }
+
+  renderSuggestion(suggestion, el) {}
+
+  selectSuggestion(suggestion, evt) {}
+}
+
+// ============================================================================
 // SLASH COMMAND SUGGEST
 // ============================================================================
 
@@ -1967,6 +2509,19 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           this.plugin.settings.taskNotesFolder = value.trim() || 'Task Notes';
           await this.plugin.saveSettings();
         }));
+
+    // ICS CALENDAR SYNC SECTION
+    containerEl.createEl('h3', { text: 'Calendar Sync' });
+
+    new obsidian.Setting(containerEl)
+      .setName('Enable ICS calendar sync')
+      .setDesc('Automatically sync calendar events from ICS plugin when opening daily notes. Events use [c] checkbox and are read-only.')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableIcsSync)
+        .onChange(async (value) => {
+          this.plugin.settings.enableIcsSync = value;
+          await this.plugin.saveSettings();
+        }));
   }
 }
 
@@ -2004,7 +2559,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
           const decorations = [];
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
-          const metadataPattern = /\s*\[(?:id|parent)::\s*[^\]]+\]/g;
+          const metadataPattern = /\s*\[(?:id|parent|uid)::\s*[^\]]+\]/g;
           // Schedule tag patterns: [> YYYY-MM-DD] and [< YYYY-MM-DD]
           const scheduleToPattern = /\s*\[>\s*(\d{4}-\d{2}-\d{2})\]/g;
           const scheduleFromPattern = /\s*\[<\s*(\d{4}-\d{2}-\d{2})\]/g;
@@ -2157,6 +2712,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
     // Register schedule shortcut suggest (> shortcut)
     this.registerEditorSuggest(new ScheduleShortcutSuggest(this.app, this));
 
+    // Register timeblock shortcut suggest (^ shortcut)
+    this.registerEditorSuggest(new TimeblockShortcutSuggest(this.app, this));
+
     // Task notes sync state
     this.taskNoteSyncing = false;
     this.taskNoteSyncTimers = new Map();
@@ -2245,6 +2803,32 @@ class TaskManagerPlugin extends obsidian.Plugin {
         this.debounceTimer = setTimeout(() => {
           this.processFile(file);
         }, 5000);
+      })
+    );
+
+    // Register file open event for ICS calendar sync
+    this.registerEvent(
+      this.app.workspace.on('file-open', async (file) => {
+        if (!file) return;
+        if (!this.settings.enableIcsSync) return;
+        if (this.isProcessing) return;
+
+        // Only sync daily notes (files in target folders with date names)
+        const noteDate = IcsEventSync.getDailyNoteDate(file, this.settings);
+        if (!noteDate) return;
+
+        // Sync ICS events
+        this.isProcessing = true;
+        try {
+          const synced = await IcsEventSync.syncEventsToNote(this.app, file, this.settings);
+          if (synced) {
+            console.log('Task Manager: Synced ICS events to', file.path);
+          }
+        } catch (e) {
+          console.error('Task Manager: Error syncing ICS events', e);
+        } finally {
+          setTimeout(() => { this.isProcessing = false; }, 100);
+        }
       })
     );
 
