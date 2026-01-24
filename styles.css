@@ -429,6 +429,7 @@ li[data-task=">"] > p > input {
   cursor: pointer;
   color: var(--text-normal);
   font-size: 12px;
+  font-family: var(--font-monospace);
   transition: background 0.1s ease;
   white-space: nowrap;
   min-width: 48px;
