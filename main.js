@@ -1414,7 +1414,9 @@ const Icons = {
   ban: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M367.2 412.5L99.5 144.8C77.1 176.1 64 214.5 64 256c0 106 86 192 192 192c41.5 0 79.9-13.1 111.2-35.5zm45.3-45.3C434.9 335.9 448 297.5 448 256c0-106-86-192-192-192c-41.5 0-79.9 13.1-111.2 35.5L412.5 367.2zM0 256a256 256 0 1 1 512 0A256 256 0 1 1 0 256z"/></svg>',
   anglesRight: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M470.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 256 265.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160zm-352 160l160-160c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L210.7 256 73.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0z"/></svg>',
   // file-lines (solid) - document with lines icon
-  fileLines: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path fill="currentColor" d="M64 0C28.7 0 0 28.7 0 64V448c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V160H256c-17.7 0-32-14.3-32-32V0H64zM256 0V128H384L256 0zM112 256H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16z"/></svg>'
+  fileLines: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path fill="currentColor" d="M64 0C28.7 0 0 28.7 0 64V448c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V160H256c-17.7 0-32-14.3-32-32V0H64zM256 0V128H384L256 0zM112 256H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16z"/></svg>',
+  // clock (regular) - time/clock icon
+  clock: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M464 256A208 208 0 1 1 48 256a208 208 0 1 1 416 0zM0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zM232 120V256c0 8 4 15.5 10.7 20l96 64c11 7.4 25.9 4.4 33.3-6.7s4.4-25.9-6.7-33.3L280 243.2V120c0-13.3-10.7-24-24-24s-24 10.7-24 24z"/></svg>'
 };
 
 // ============================================================================
@@ -1771,7 +1773,8 @@ const SLASH_COMMANDS = [
   { id: 'complete', label: 'Mark Complete', icon: Icons.check, marker: 'x' },
   { id: 'in-progress', label: 'Mark In Progress', icon: Icons.halfCircle, marker: '/' },
   { id: 'cancelled', label: 'Mark Cancelled', icon: Icons.ban, marker: '-' },
-  { id: 'schedule', label: 'Schedule Task', icon: Icons.anglesRight, action: 'schedule' }
+  { id: 'schedule', label: 'Schedule Task', icon: Icons.anglesRight, action: 'schedule' },
+  { id: 'timeblock', label: 'Set Time Block', icon: Icons.clock, action: 'timeblock' }
 ];
 
 class SlashCommandSuggest extends obsidian.EditorSuggest {
@@ -1834,11 +1837,18 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
       editor.setLine(lineNum, newLine);
     } else if (suggestion.action === 'schedule') {
       this.openSchedulePopup(editor, lineNum);
+    } else if (suggestion.action === 'timeblock') {
+      this.openTimeBlockPopup(editor, lineNum);
     }
   }
 
   openSchedulePopup(editor, lineNum) {
     const popup = new ScheduleDatePopup(this.plugin, editor, lineNum);
+    popup.open();
+  }
+
+  openTimeBlockPopup(editor, lineNum) {
+    const popup = new TimePickerPopup(this.plugin, editor, lineNum, 'start');
     popup.open();
   }
 }
