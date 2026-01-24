@@ -34,6 +34,10 @@ const DEFAULT_SETTINGS = {
   enableTaskNotes: true,
   taskNotesFolder: 'Task Notes',
 
+  // Event Notes (for calendar events)
+  enableEventNotes: true,
+  eventNotesFolder: 'Event Notes',
+
   // ICS Calendar Sync
   enableIcsSync: true
 };
@@ -1006,6 +1010,134 @@ ${subtasksContent}
     }
 
     return false;
+  }
+};
+
+// ============================================================================
+// EVENT NOTE MANAGER MODULE
+// ============================================================================
+// Creates and manages notes for calendar events, similar to Task Notes.
+// When clicking a calendar event's "notes" button, creates a note with
+// the event's UID in frontmatter for tracking/linking purposes.
+// ============================================================================
+
+const EventNoteManager = {
+  /**
+   * Sanitize event title for use as filename
+   */
+  sanitizeFilename(text) {
+    if (!text) return null;
+    // Remove time range at start (e.g., "10:00 - 15:00")
+    let cleaned = text.replace(/^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*/, '');
+    // Remove URLs
+    cleaned = cleaned.replace(/https?:\/\/[^\s]+/g, '');
+    // Remove special characters that are problematic in filenames
+    cleaned = cleaned.replace(/[<>:"/\\|?*]/g, '');
+    // Trim whitespace and limit length
+    cleaned = cleaned.trim().substring(0, 100);
+    return cleaned || null;
+  },
+
+  /**
+   * Extract event title from a calendar event line
+   * e.g., "- [c] 10:00 - 15:00 Meeting Name https://... [uid::xxx]"
+   * Returns: "Meeting Name"
+   */
+  extractEventTitle(line) {
+    // Remove the checkbox prefix
+    let text = line.replace(/^[\t]*- \[c\]\s*/, '');
+    // Remove time range
+    text = text.replace(/^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*/, '');
+    // Remove uid metadata
+    text = text.replace(/\s*\[uid::[^\]]+\]/g, '');
+    // Remove URLs but keep text before them
+    text = text.replace(/\s*https?:\/\/[^\s]+/g, '');
+    return text.trim();
+  },
+
+  /**
+   * Extract time range from calendar event line
+   * Returns object { start: "HH:MM", end: "HH:MM" } or null
+   */
+  extractTimeRange(line) {
+    const match = line.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
+    if (match) {
+      return { start: match[1], end: match[2] };
+    }
+    return null;
+  },
+
+  /**
+   * Open or create an event note for a calendar event
+   * @param {App} app - Obsidian app instance
+   * @param {Object} settings - Plugin settings
+   * @param {string} eventTitle - The event title (used as filename)
+   * @param {string} uid - The calendar event UID
+   * @param {string} sourceFilePath - Path to the daily note containing this event
+   * @param {string} timeRange - Optional time range string
+   */
+  async openOrCreateEventNote(app, settings, eventTitle, uid, sourceFilePath, timeRange = null) {
+    const sanitizedName = this.sanitizeFilename(eventTitle);
+    if (!sanitizedName) {
+      new obsidian.Notice('Could not extract event name');
+      return null;
+    }
+
+    const folderPath = settings.eventNotesFolder;
+    const filePath = `${folderPath}/${sanitizedName}.md`;
+
+    const folder = app.vault.getAbstractFileByPath(folderPath);
+    if (!folder) {
+      await app.vault.createFolder(folderPath);
+    }
+
+    let file = app.vault.getAbstractFileByPath(filePath);
+
+    if (!file) {
+      const sourceLink = sourceFilePath ? `[[${sourceFilePath.replace(/\.md$/, '')}]]` : '';
+      const timeInfo = timeRange ? `${timeRange.start} - ${timeRange.end}` : '';
+      const dateFromSource = sourceFilePath ? sourceFilePath.match(/(\d{4}-\d{2}-\d{2})/)?.[1] : new Date().toISOString().split('T')[0];
+
+      // Event note frontmatter includes eventUID for tracking
+      const content = `---
+event: "${eventTitle.replace(/"/g, '\\"')}"
+eventUID: "${uid || ''}"
+date: ${dateFromSource}
+time: "${timeInfo}"
+created: ${new Date().toISOString().split('T')[0]}
+sourceFile: "${sourceFilePath || ''}"
+---
+
+# ${eventTitle}
+
+**Date:** ${dateFromSource}${timeInfo ? `  |  **Time:** ${timeInfo}` : ''}
+**Source:** ${sourceLink}
+
+---
+
+## Agenda
+
+
+## Notes
+
+
+## Action Items
+
+- [ ]
+
+## Follow-ups
+
+
+`;
+      file = await app.vault.create(filePath, content);
+      new obsidian.Notice(`Created: ${sanitizedName}`);
+    }
+
+    if (file instanceof obsidian.TFile) {
+      await app.workspace.getLeaf().openFile(file);
+    }
+
+    return file;
   }
 };
 
@@ -2000,7 +2132,7 @@ class TaskDecorationsWidget extends WidgetType {
     const container = document.createElement('span');
     container.className = 'task-decorations-container';
 
-    // Add notes button if enabled
+    // Add notes button if enabled (for both tasks and calendar events)
     if (this.options.showNotesButton && this.options.taskText) {
       const btn = document.createElement('span');
       btn.className = 'task-note-button';
@@ -2009,19 +2141,33 @@ class TaskDecorationsWidget extends WidgetType {
       iconSpan.innerHTML = Icons.fileLines;
       btn.appendChild(iconSpan);
       btn.appendChild(document.createTextNode('notes'));
-      btn.setAttribute('aria-label', 'Open task note');
+      btn.setAttribute('aria-label', this.options.isCalendarEvent ? 'Open event note' : 'Open task note');
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
         const activeFile = this.plugin.app.workspace.getActiveFile();
         const sourceFilePath = activeFile ? activeFile.path : null;
-        await TaskNoteManager.openOrCreateTaskNote(
-          this.plugin.app,
-          this.plugin.settings,
-          this.options.taskText,
-          sourceFilePath,
-          this.options.taskId
-        );
+
+        if (this.options.isCalendarEvent) {
+          // Use EventNoteManager for calendar events
+          await EventNoteManager.openOrCreateEventNote(
+            this.plugin.app,
+            this.plugin.settings,
+            this.options.taskText,
+            this.options.uid,
+            sourceFilePath,
+            this.options.eventTimeRange
+          );
+        } else {
+          // Use TaskNoteManager for regular tasks
+          await TaskNoteManager.openOrCreateTaskNote(
+            this.plugin.app,
+            this.plugin.settings,
+            this.options.taskText,
+            sourceFilePath,
+            this.options.taskId
+          );
+        }
       });
       container.appendChild(btn);
     }
@@ -2093,6 +2239,7 @@ class TaskDecorationsWidget extends WidgetType {
       other.options.parentId === this.options.parentId &&
       other.options.uid === this.options.uid &&
       other.options.isCalendarEvent === this.options.isCalendarEvent &&
+      JSON.stringify(other.options.eventTimeRange) === JSON.stringify(this.options.eventTimeRange) &&
       JSON.stringify(other.options.scheduleToDates) === JSON.stringify(this.options.scheduleToDates) &&
       JSON.stringify(other.options.scheduleFromDates) === JSON.stringify(this.options.scheduleFromDates) &&
       other.options.showInfoButton === this.options.showInfoButton &&
@@ -2522,6 +2669,30 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    // EVENT NOTES SECTION
+    containerEl.createEl('h3', { text: 'Event Notes' });
+
+    new obsidian.Setting(containerEl)
+      .setName('Enable event notes')
+      .setDesc('Show "notes" button on calendar events to create/open dedicated event notes with eventUID in frontmatter')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableEventNotes)
+        .onChange(async (value) => {
+          this.plugin.settings.enableEventNotes = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new obsidian.Setting(containerEl)
+      .setName('Event notes folder')
+      .setDesc('Folder where event notes will be created')
+      .addText(text => text
+        .setPlaceholder('Event Notes')
+        .setValue(this.plugin.settings.eventNotesFolder)
+        .onChange(async (value) => {
+          this.plugin.settings.eventNotesFolder = value.trim() || 'Event Notes';
+          await this.plugin.saveSettings();
+        }));
+
     // ICS CALENDAR SYNC SECTION
     containerEl.createEl('h3', { text: 'Calendar Sync' });
 
@@ -2670,10 +2841,20 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 }
 
                 // Determine what to show in the unified container
-                const taskText = TaskNoteManager.extractTaskTextFromLine(lineText);
                 const isCalendarEvent = TaskUtils.isCalendarEvent(lineText);
                 const uid = isCalendarEvent ? IcsEventSync.extractUid(lineText) : null;
-                const showNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
+
+                // For calendar events, extract event title; for tasks, extract task text
+                const taskText = isCalendarEvent
+                  ? EventNoteManager.extractEventTitle(lineText)
+                  : TaskNoteManager.extractTaskTextFromLine(lineText);
+                const eventTimeRange = isCalendarEvent ? EventNoteManager.extractTimeRange(lineText) : null;
+
+                // Show notes button for parent tasks OR calendar events (with their respective settings)
+                const showTaskNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
+                const showEventNotesButton = plugin.settings.enableEventNotes && isCalendarEvent && uid && taskText && taskText.trim() !== '';
+                const showNotesButton = showTaskNotesButton || showEventNotesButton;
+
                 const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
                 const hasSchedulePills = scheduleToDates.length > 0 || scheduleFromDates.length > 0;
 
@@ -2689,6 +2870,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                         parentId: parentId,
                         uid: uid,
                         isCalendarEvent: isCalendarEvent,
+                        eventTimeRange: eventTimeRange,
                         scheduleToDates: scheduleToDates.length > 0 ? scheduleToDates : null,
                         scheduleFromDates: scheduleFromDates.length > 0 ? scheduleFromDates : null,
                         showInfoButton: showInfoButton,
