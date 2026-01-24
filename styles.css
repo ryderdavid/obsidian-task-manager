@@ -355,14 +355,14 @@ li[data-task=">"] > p > input {
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-  min-width: 300px;
+  min-width: 260px;
   overflow: hidden;
 }
 
 .timeblock-picker-header {
-  padding: 12px 16px;
+  padding: 10px 16px;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-normal);
   border-bottom: 1px solid var(--background-modifier-border);
   text-align: center;
@@ -371,7 +371,7 @@ li[data-task=">"] > p > input {
 }
 
 .timeblock-picker-start-info {
-  padding: 8px 16px;
+  padding: 6px 16px;
   font-size: 12px;
   color: var(--text-muted);
   background: var(--background-secondary);
@@ -380,6 +380,8 @@ li[data-task=">"] > p > input {
 
 .timeblock-picker-columns {
   display: flex;
+  max-height: 360px;
+  overflow-y: auto;
 }
 
 .timeblock-picker-column {
@@ -392,93 +394,93 @@ li[data-task=">"] > p > input {
 }
 
 .timeblock-picker-column-header {
-  padding: 8px 12px;
+  padding: 6px 12px;
   font-weight: 600;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--text-muted);
   text-align: center;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   background: var(--background-secondary);
   border-bottom: 1px solid var(--background-modifier-border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
+/* Hour row - contains hour label and minute options */
+.timeblock-picker-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--background-modifier-border-subtle, rgba(0,0,0,0.05));
+}
+
+.timeblock-picker-row:last-child {
+  border-bottom: none;
+}
+
+.timeblock-picker-row.is-suggested {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+/* Hour label */
 .timeblock-picker-hour {
-  padding: 6px 12px;
+  padding: 5px 8px;
   cursor: pointer;
-  text-align: center;
   color: var(--text-normal);
-  font-size: 13px;
+  font-size: 12px;
   transition: background 0.1s ease;
+  white-space: nowrap;
+  min-width: 48px;
 }
 
-.timeblock-picker-hour:hover {
+.timeblock-picker-row:hover .timeblock-picker-hour,
+.timeblock-picker-row.is-expanded .timeblock-picker-hour {
   background: var(--background-secondary);
 }
 
-.timeblock-picker-hour.is-selected {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-}
-
-.timeblock-picker-hour.is-suggested {
-  background: rgba(59, 130, 246, 0.15);
+.timeblock-picker-row.is-suggested .timeblock-picker-hour {
   color: var(--text-accent);
   font-weight: 500;
 }
 
-.timeblock-picker-hour.is-suggested:hover {
-  background: rgba(59, 130, 246, 0.25);
+/* Minute options - hidden by default, shown on hover or when expanded */
+.timeblock-picker-row-minutes {
+  display: none;
+  gap: 2px;
+  padding-right: 4px;
 }
 
-.timeblock-picker-minutes {
-  padding: 12px 16px;
-  border-top: 1px solid var(--background-modifier-border);
-  background: var(--background-secondary);
-}
-
-.timeblock-picker-minute-label {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-  text-align: center;
-}
-
-.timeblock-picker-minute-options {
+.timeblock-picker-row:hover .timeblock-picker-row-minutes,
+.timeblock-picker-row.is-expanded .timeblock-picker-row-minutes {
   display: flex;
-  justify-content: center;
-  gap: 8px;
 }
 
+/* Minute buttons */
 .timeblock-picker-minute-btn {
-  padding: 6px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
-  background: var(--background-primary);
-  color: var(--text-normal);
-  font-size: 13px;
+  padding: 3px 6px;
+  border: none;
+  border-radius: 3px;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  font-size: 11px;
   font-family: var(--font-monospace);
   cursor: pointer;
   transition: all 0.1s ease;
 }
 
 .timeblock-picker-minute-btn:hover {
-  background: var(--background-modifier-hover);
-  border-color: var(--interactive-accent);
-}
-
-.timeblock-picker-minute-btn.is-selected {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
-  border-color: var(--interactive-accent);
 }
 
 .timeblock-picker-minute-btn.is-suggested {
-  background: rgba(59, 130, 246, 0.15);
+  background: rgba(59, 130, 246, 0.2);
   color: var(--text-accent);
-  border-color: var(--text-accent);
+  font-weight: 500;
 }
 
 .timeblock-picker-minute-btn.is-suggested:hover {
-  background: rgba(59, 130, 246, 0.25);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
 }

@@ -1495,9 +1495,8 @@ class TimePickerPopup {
     this.existingStart = existingStart; // { hour, minute } for end mode
     this.onComplete = onComplete; // Callback for chaining start->end
     this.selectedHour = null;
-    this.selectedMinute = 0; // Default to :00
+    this.expandedHour = null; // For mobile: tracks which hour row is expanded
     this.container = null;
-    this.minuteSelector = null;
 
     this.handleKeyDown = this.handleKeyDown.bind(this);
     this.handleClickOutside = this.handleClickOutside.bind(this);
@@ -1557,11 +1556,6 @@ class TimePickerPopup {
     columns.appendChild(nightColumn);
 
     this.container.appendChild(columns);
-
-    // Minute selector (appears after hour is selected)
-    if (this.selectedHour !== null) {
-      this.renderMinuteSelector();
-    }
   }
 
   createColumn(title, startHour, endHour) {
@@ -1575,103 +1569,87 @@ class TimePickerPopup {
 
     for (let h = startHour; h <= endHour; h++) {
       const hour = h % 24;
-      const item = document.createElement('div');
-      item.className = 'timeblock-picker-hour';
-      if (this.selectedHour === hour) {
-        item.addClass('is-selected');
-      }
-
-      // Highlight suggested time in end mode
-      if (this.mode === 'end' && this.existingStart) {
-        const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
-        if (hour === defaultEnd.hour) {
-          item.addClass('is-suggested');
-        }
-      }
-
-      item.textContent = TimeblockUtils.formatDisplayTime(hour);
-      item.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.selectHour(hour);
-      });
-      column.appendChild(item);
+      const row = this.createHourRow(hour);
+      column.appendChild(row);
     }
 
     return column;
   }
 
-  renderMinuteSelector() {
-    if (this.minuteSelector) {
-      this.minuteSelector.remove();
+  createHourRow(hour) {
+    const row = document.createElement('div');
+    row.className = 'timeblock-picker-row';
+
+    // Check if this hour is expanded (for mobile click-to-expand)
+    const isExpanded = this.expandedHour === hour;
+    if (isExpanded) {
+      row.addClass('is-expanded');
     }
 
-    this.minuteSelector = document.createElement('div');
-    this.minuteSelector.className = 'timeblock-picker-minutes';
+    // Highlight suggested time in end mode
+    let suggestedMinute = null;
+    if (this.mode === 'end' && this.existingStart) {
+      const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
+      if (hour === defaultEnd.hour) {
+        row.addClass('is-suggested');
+        suggestedMinute = defaultEnd.minute;
+      }
+    }
 
-    const label = document.createElement('div');
-    label.className = 'timeblock-picker-minute-label';
-    label.textContent = `${TimeblockUtils.formatDisplayTime(this.selectedHour)} :`;
-    this.minuteSelector.appendChild(label);
+    // Hour label
+    const hourLabel = document.createElement('div');
+    hourLabel.className = 'timeblock-picker-hour';
+    hourLabel.textContent = TimeblockUtils.formatDisplayTime(hour);
 
+    // Click on hour label: expand on mobile or select :00 on desktop with hover
+    hourLabel.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.handleHourClick(hour);
+    });
+
+    row.appendChild(hourLabel);
+
+    // Minute options container (shown on hover or when expanded)
     const minuteOptions = document.createElement('div');
-    minuteOptions.className = 'timeblock-picker-minute-options';
+    minuteOptions.className = 'timeblock-picker-row-minutes';
 
-    // 15-minute intervals: 00, 15, 30, 45
     for (const minute of [0, 15, 30, 45]) {
       const btn = document.createElement('button');
       btn.className = 'timeblock-picker-minute-btn';
-      if (this.selectedMinute === minute) {
-        btn.addClass('is-selected');
-      }
 
-      // In end mode, highlight the suggested minute
-      if (this.mode === 'end' && this.existingStart) {
-        const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
-        if (this.selectedHour === defaultEnd.hour && minute === defaultEnd.minute) {
-          btn.addClass('is-suggested');
-        }
+      if (suggestedMinute === minute) {
+        btn.addClass('is-suggested');
       }
 
       btn.textContent = minute.toString().padStart(2, '0');
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.selectMinute(minute);
+        this.selectTime(hour, minute);
       });
       minuteOptions.appendChild(btn);
     }
 
-    this.minuteSelector.appendChild(minuteOptions);
-    this.container.appendChild(this.minuteSelector);
+    row.appendChild(minuteOptions);
+
+    return row;
   }
 
-  selectHour(hour) {
-    this.selectedHour = hour;
-
-    // In end mode, default to suggested minute if this is the suggested hour
-    if (this.mode === 'end' && this.existingStart) {
-      const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
-      if (hour === defaultEnd.hour) {
-        this.selectedMinute = defaultEnd.minute;
-      } else {
-        this.selectedMinute = 0;
-      }
-    } else {
-      this.selectedMinute = 0;
+  handleHourClick(hour) {
+    // If already expanded for this hour, select :00
+    if (this.expandedHour === hour) {
+      this.selectTime(hour, 0);
+      return;
     }
 
+    // Expand this hour row (for mobile/touch)
+    this.expandedHour = hour;
     this.render();
   }
 
-  selectMinute(minute) {
-    this.selectedMinute = minute;
-    this.confirm();
-  }
-
-  confirm() {
-    if (this.selectedHour === null) return;
-
+  selectTime(hour, minute) {
+    this.selectedHour = hour;
     this.close();
 
     if (this.mode === 'start') {
@@ -1681,14 +1659,14 @@ class TimePickerPopup {
         this.editor,
         this.lineNum,
         'end',
-        { hour: this.selectedHour, minute: this.selectedMinute },
+        { hour: hour, minute: minute },
         (endHour, endMinute) => {
-          this.applyTimeblock(this.selectedHour, this.selectedMinute, endHour, endMinute);
+          this.applyTimeblock(hour, minute, endHour, endMinute);
         }
       );
       endPopup.open();
     } else if (this.mode === 'end' && this.onComplete) {
-      this.onComplete(this.selectedHour, this.selectedMinute);
+      this.onComplete(hour, minute);
     }
   }
 
@@ -1722,10 +1700,6 @@ class TimePickerPopup {
       e.preventDefault();
       e.stopPropagation();
       this.close();
-    } else if (e.key === 'Enter' && this.selectedHour !== null) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.confirm();
     }
   }
 
