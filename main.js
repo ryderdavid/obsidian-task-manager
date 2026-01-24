@@ -3725,6 +3725,28 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     });
 
+    this.addCommand({
+      id: 'archive-completed-tasks',
+      name: 'Archive completed/scheduled tasks now',
+      editorCallback: async (editor, view) => {
+        const file = view.file;
+        if (!file || !TaskUtils.shouldProcessFile(file, this.settings)) {
+          new obsidian.Notice('This command only works in target folders');
+          return;
+        }
+
+        const content = editor.getValue();
+        const archived = TaskArchiver.archiveContent(content, this.settings);
+
+        if (archived !== content) {
+          editor.setValue(archived);
+          new obsidian.Notice('Tasks archived');
+        } else {
+          new obsidian.Notice('No tasks to archive');
+        }
+      }
+    });
+
     // Add settings tab
     this.addSettingTab(new TaskManagerSettingTab(this.app, this));
   }
