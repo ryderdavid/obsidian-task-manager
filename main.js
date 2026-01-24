@@ -142,10 +142,18 @@ const TaskUtils = {
 const IcsEventSync = {
   // Pattern to extract UID from calendar event line
   UID_PATTERN: /\[uid::([^\]]+)\]/,
+  // Pattern to extract calendar source from calendar event line
+  CALENDAR_PATTERN: /\[calendar::([^\]]+)\]/,
 
   // Extract UID from a calendar event line
   extractUid(line) {
     const match = line.match(this.UID_PATTERN);
+    return match ? match[1].trim() : null;
+  },
+
+  // Extract calendar source name from a calendar event line
+  extractCalendar(line) {
+    const match = line.match(this.CALENDAR_PATTERN);
     return match ? match[1].trim() : null;
   },
 
@@ -189,8 +197,15 @@ const IcsEventSync = {
     // Use the real UID from the ICS file (from our forked plugin)
     const uid = event.uid || `fallback-${event.utime}`;
 
-    // Build the line with UID
-    return `- [c] ${startTime} - ${endTime} ${text} [uid::${uid}]`;
+    // Get calendar source name from ICS plugin
+    const calendarName = event.icsName || '';
+
+    // Build the line with UID and calendar source
+    let line = `- [c] ${startTime} - ${endTime} ${text} [uid::${uid}]`;
+    if (calendarName) {
+      line += ` [calendar::${calendarName}]`;
+    }
+    return line;
   },
 
   // Check if a file is a daily note for a specific date
@@ -1147,6 +1162,8 @@ const EventNoteManager = {
     text = text.replace(/^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*/, '');
     // Remove uid metadata
     text = text.replace(/\s*\[uid::[^\]]+\]/g, '');
+    // Remove calendar metadata
+    text = text.replace(/\s*\[calendar::[^\]]+\]/g, '');
     // Remove URLs but keep text before them
     text = text.replace(/\s*https?:\/\/[^\s]+/g, '');
     return text.trim();
@@ -1172,8 +1189,9 @@ const EventNoteManager = {
    * @param {string} uid - The calendar event UID
    * @param {string} sourceFilePath - Path to the daily note containing this event
    * @param {string} timeRange - Optional time range string
+   * @param {string} calendarSource - Optional calendar source name (e.g., "Work", "Fastmail")
    */
-  async openOrCreateEventNote(app, settings, eventTitle, uid, sourceFilePath, timeRange = null) {
+  async openOrCreateEventNote(app, settings, eventTitle, uid, sourceFilePath, timeRange = null, calendarSource = null) {
     const sanitizedName = this.sanitizeFilename(eventTitle);
     if (!sanitizedName) {
       new obsidian.Notice('Could not extract event name');
@@ -1199,6 +1217,7 @@ const EventNoteManager = {
       const content = `---
 event: "${eventTitle.replace(/"/g, '\\"')}"
 eventUID: "${uid || ''}"
+calendar: "${calendarSource || ''}"
 date: ${dateFromSource}
 time: "${timeInfo}"
 created: ${new Date().toISOString().split('T')[0]}
@@ -2461,7 +2480,8 @@ class TaskDecorationsWidget extends WidgetType {
             this.options.taskText,
             this.options.uid,
             sourceFilePath,
-            this.options.eventTimeRange
+            this.options.eventTimeRange,
+            this.options.calendarSource
           );
         } else {
           // Use TaskNoteManager for regular tasks
@@ -2518,7 +2538,7 @@ class TaskDecorationsWidget extends WidgetType {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.plugin.showTaskInfo(this.options.taskId, this.options.parentId, this.options.taskText, null, null, this.options.uid, this.options.isCalendarEvent);
+        this.plugin.showTaskInfo(this.options.taskId, this.options.parentId, this.options.taskText, null, null, this.options.uid, this.options.isCalendarEvent, this.options.calendarSource);
       });
       container.appendChild(btn);
     }
@@ -2543,6 +2563,7 @@ class TaskDecorationsWidget extends WidgetType {
       other.options.taskId === this.options.taskId &&
       other.options.parentId === this.options.parentId &&
       other.options.uid === this.options.uid &&
+      other.options.calendarSource === this.options.calendarSource &&
       other.options.isCalendarEvent === this.options.isCalendarEvent &&
       JSON.stringify(other.options.eventTimeRange) === JSON.stringify(this.options.eventTimeRange) &&
       JSON.stringify(other.options.scheduleToDates) === JSON.stringify(this.options.scheduleToDates) &&
@@ -2687,7 +2708,7 @@ class ScheduledFromPillWidget extends WidgetType {
 
 // Modal for displaying task metadata
 class TaskInfoModal extends obsidian.Modal {
-  constructor(app, taskId, parentId, taskText, parentText, onUnlink, uid, isCalendarEvent) {
+  constructor(app, taskId, parentId, taskText, parentText, onUnlink, uid, isCalendarEvent, calendarSource) {
     super(app);
     this.taskId = taskId;
     this.parentId = parentId;
@@ -2696,6 +2717,7 @@ class TaskInfoModal extends obsidian.Modal {
     this.onUnlink = onUnlink;
     this.uid = uid;
     this.isCalendarEvent = isCalendarEvent;
+    this.calendarSource = calendarSource;
   }
 
   onOpen() {
@@ -2713,6 +2735,12 @@ class TaskInfoModal extends obsidian.Modal {
         const nameRow = infoContainer.createDiv({ cls: 'task-info-row' });
         nameRow.createSpan({ text: 'Event: ', cls: 'task-info-label' });
         nameRow.createSpan({ text: this.taskText, cls: 'task-info-value task-info-name' });
+      }
+
+      if (this.calendarSource) {
+        const calendarRow = infoContainer.createDiv({ cls: 'task-info-row' });
+        calendarRow.createSpan({ text: 'Calendar: ', cls: 'task-info-label' });
+        calendarRow.createSpan({ text: this.calendarSource, cls: 'task-info-value task-info-name' });
       }
 
       const uidRow = infoContainer.createDiv({ cls: 'task-info-row' });
@@ -3047,7 +3075,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
           const decorations = [];
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
-          const metadataPattern = /\s*\[(?:id|parent|uid)::\s*[^\]]+\]/g;
+          const metadataPattern = /\s*\[(?:id|parent|uid|calendar)::\s*[^\]]+\]/g;
           // Time block pattern: HH:MM - HH:MM at start of task text
           const timeblockPattern = /^([\t]*- \[.\]\s*)(\d{2}:\d{2}\s*-\s*\d{2}:\d{2})/;
           // Schedule tag patterns: [> YYYY-MM-DD] and [< YYYY-MM-DD]
@@ -3165,6 +3193,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 // Determine what to show in the unified container
                 const isCalendarEvent = TaskUtils.isCalendarEvent(lineText);
                 const uid = isCalendarEvent ? IcsEventSync.extractUid(lineText) : null;
+                const calendarSource = isCalendarEvent ? IcsEventSync.extractCalendar(lineText) : null;
 
                 // For calendar events, extract event title; for tasks, extract task text
                 const taskText = isCalendarEvent
@@ -3191,6 +3220,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                         taskId: taskId,
                         parentId: parentId,
                         uid: uid,
+                        calendarSource: calendarSource,
                         isCalendarEvent: isCalendarEvent,
                         eventTimeRange: eventTimeRange,
                         scheduleToDates: scheduleToDates.length > 0 ? scheduleToDates : null,
@@ -3720,7 +3750,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
     }
   }
 
-  showTaskInfo(taskId, parentId, taskText, editor, lineNum, uid, isCalendarEvent) {
+  showTaskInfo(taskId, parentId, taskText, editor, lineNum, uid, isCalendarEvent, calendarSource) {
     // Find parent task text by ID if we have a parentId
     let parentText = null;
     if (parentId) {
@@ -3749,7 +3779,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
         editor.setLine(lineNum, newLine);
         new obsidian.Notice('Task unlinked from parent');
       }
-    }, uid, isCalendarEvent);
+    }, uid, isCalendarEvent, calendarSource);
     modal.open();
   }
 }
