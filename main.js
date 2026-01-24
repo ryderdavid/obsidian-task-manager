@@ -49,6 +49,7 @@ const TaskUtils = {
   METADATA_PATTERN: /\s*\[(?:id|parent)::[^\]]+\]/g,
   COMPLETED_PATTERN: /^[\t]*- \[[xX]\]/,
   TIMEBLOCK_PATTERN: /^- \[.\]\s*(\d{2}):(\d{2}) - (\d{2}):(\d{2})/,
+  CALENDAR_EVENT_PATTERN: /^[\t]*- \[c\]/,
 
   extractId(line) {
     const match = line.match(this.ID_PATTERN);
@@ -95,6 +96,10 @@ const TaskUtils = {
     return this.TASK_PATTERN.test(line);
   },
 
+  isCalendarEvent(line) {
+    return this.CALENDAR_EVENT_PATTERN.test(line);
+  },
+
   isParentTask(line) {
     return this.PARENT_TASK_PATTERN.test(line);
   },
@@ -134,6 +139,12 @@ const TaskIdManager = {
 
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i];
+
+      // Skip calendar events - they don't need task IDs
+      if (TaskUtils.isCalendarEvent(line)) {
+        result.push(line);
+        continue;
+      }
 
       if (TaskUtils.isTask(line)) {
         if (!TaskUtils.extractId(line)) {
