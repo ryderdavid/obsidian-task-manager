@@ -1419,6 +1419,27 @@ const TaskScheduler = {
     editor.setLine(lineNum, updatedLine);
 
     // -----------------------------------------------------------------------
+    // MARK SUBTASKS AS SCHEDULED TOO
+    // -----------------------------------------------------------------------
+    // When a parent task is scheduled away, its subtasks should also show [>]
+    // so they don't appear as orphaned incomplete tasks
+    // -----------------------------------------------------------------------
+    const totalLines = editor.lineCount();
+    for (let i = lineNum + 1; i < totalLines; i++) {
+      const subtaskLine = editor.getLine(i);
+      if (TaskUtils.isSubtask(subtaskLine)) {
+        // Mark subtask as scheduled (change [ ] to [>])
+        const updatedSubtask = subtaskLine.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
+        if (updatedSubtask !== subtaskLine) {
+          editor.setLine(i, updatedSubtask);
+        }
+      } else {
+        // Stop at first non-subtask line
+        break;
+      }
+    }
+
+    // -----------------------------------------------------------------------
     // UPDATE TASK NOTE (if one exists for this task)
     // -----------------------------------------------------------------------
     const taskText = TaskNoteManager.extractTaskTextFromLine(line);
