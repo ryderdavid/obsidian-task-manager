@@ -166,7 +166,7 @@ const IcsEventSync = {
   },
 
   // Build a calendar event line from ICS event data
-  // ICS plugin returns: { time, endTime, summary, location, callUrl, utime, icsName, ... }
+  // ICS plugin returns: { uid, time, endTime, summary, location, callUrl, utime, icsName, ... }
   buildEventLine(event, settings) {
     // ICS plugin already formats times as strings like "10:00"
     const startTime = event.time || '00:00';
@@ -182,12 +182,11 @@ const IcsEventSync = {
       text += ` ${event.callUrl}`;
     }
 
-    // Generate a stable ID from event properties (ICS plugin doesn't expose raw UID)
-    // Use utime + summary hash as a pseudo-UID for matching
-    const pseudoUid = `${event.utime}-${(event.summary || '').substring(0, 20).replace(/[^a-zA-Z0-9]/g, '')}`;
+    // Use the real UID from the ICS file (from our forked plugin)
+    const uid = event.uid || `fallback-${event.utime}`;
 
-    // Build the line with pseudo-UID
-    return `- [c] ${startTime} - ${endTime} ${text} [uid::${pseudoUid}]`;
+    // Build the line with UID
+    return `- [c] ${startTime} - ${endTime} ${text} [uid::${uid}]`;
   },
 
   // Check if a file is a daily note for a specific date
@@ -2236,13 +2235,15 @@ class ScheduledFromPillWidget extends WidgetType {
 
 // Modal for displaying task metadata
 class TaskInfoModal extends obsidian.Modal {
-  constructor(app, taskId, parentId, taskText, parentText, onUnlink) {
+  constructor(app, taskId, parentId, taskText, parentText, onUnlink, uid, isCalendarEvent) {
     super(app);
     this.taskId = taskId;
     this.parentId = parentId;
     this.taskText = taskText;
     this.parentText = parentText;
     this.onUnlink = onUnlink;
+    this.uid = uid;
+    this.isCalendarEvent = isCalendarEvent;
   }
 
   onOpen() {
@@ -2250,11 +2251,27 @@ class TaskInfoModal extends obsidian.Modal {
     contentEl.empty();
     contentEl.addClass('task-info-modal');
 
-    contentEl.createEl('h3', { text: 'Task Information' });
+    contentEl.createEl('h3', { text: this.isCalendarEvent ? 'Event Information' : 'Task Information' });
 
     const infoContainer = contentEl.createDiv({ cls: 'task-info-content' });
 
-    if (this.taskId) {
+    // Calendar event info
+    if (this.isCalendarEvent && this.uid) {
+      if (this.taskText) {
+        const nameRow = infoContainer.createDiv({ cls: 'task-info-row' });
+        nameRow.createSpan({ text: 'Event: ', cls: 'task-info-label' });
+        nameRow.createSpan({ text: this.taskText, cls: 'task-info-value task-info-name' });
+      }
+
+      const uidRow = infoContainer.createDiv({ cls: 'task-info-row' });
+      uidRow.createSpan({ text: 'Event UID: ', cls: 'task-info-label' });
+      uidRow.createSpan({ text: this.uid, cls: 'task-info-value' });
+
+      const noteRow = infoContainer.createDiv({ cls: 'task-info-row' });
+      noteRow.createSpan({ text: 'Calendar events sync from ICS and are read-only', cls: 'task-info-note' });
+    }
+    // Task info
+    else if (this.taskId) {
       // Task name row
       if (this.taskText) {
         const nameRow = infoContainer.createDiv({ cls: 'task-info-row' });
