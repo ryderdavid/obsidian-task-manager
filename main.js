@@ -3127,6 +3127,73 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     });
 
+    // Task-specific commands (conditionally enabled via editorCheckCallback)
+    // These integrate with Slash Commander and command palette
+    this.addCommand({
+      id: 'mark-task-complete',
+      name: 'Mark task complete',
+      editorCheckCallback: (checking, editor, view) => {
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        if (!TaskUtils.isTask(line)) return false;
+        if (checking) return true;
+        const newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1x$2');
+        editor.setLine(cursor.line, newLine);
+      }
+    });
+
+    this.addCommand({
+      id: 'mark-task-in-progress',
+      name: 'Mark task in progress',
+      editorCheckCallback: (checking, editor, view) => {
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        if (!TaskUtils.isTask(line)) return false;
+        if (checking) return true;
+        const newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1/$2');
+        editor.setLine(cursor.line, newLine);
+      }
+    });
+
+    this.addCommand({
+      id: 'mark-task-cancelled',
+      name: 'Mark task cancelled',
+      editorCheckCallback: (checking, editor, view) => {
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        if (!TaskUtils.isTask(line)) return false;
+        if (checking) return true;
+        const newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1-$2');
+        editor.setLine(cursor.line, newLine);
+      }
+    });
+
+    this.addCommand({
+      id: 'schedule-task',
+      name: 'Schedule task',
+      editorCheckCallback: (checking, editor, view) => {
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        if (!TaskUtils.isTask(line)) return false;
+        if (checking) return true;
+        const popup = new ScheduleDatePopup(this, editor, cursor.line);
+        popup.open();
+      }
+    });
+
+    this.addCommand({
+      id: 'set-time-block',
+      name: 'Set time block',
+      editorCheckCallback: (checking, editor, view) => {
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        if (!TaskUtils.isTask(line)) return false;
+        if (checking) return true;
+        const popup = new TimePickerPopup(this, editor, cursor.line, 'start');
+        popup.open();
+      }
+    });
+
     // Add settings tab
     this.addSettingTab(new TaskManagerSettingTab(this.app, this));
   }
