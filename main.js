@@ -2189,6 +2189,24 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
     this.registerEditorExtension([lineChangePlugin]);
 
+    // Prevent calendar event [c] checkboxes from being toggled
+    this.registerDomEvent(document, 'click', (evt) => {
+      const target = evt.target;
+      // Check if clicking on a calendar event checkbox
+      if (target.matches('input[data-task="c"], .task-list-item-checkbox[data-task="c"]')) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        return false;
+      }
+      // Also check parent for Reading view
+      const li = target.closest('li[data-task="c"]');
+      if (li && target.matches('input[type="checkbox"]')) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        return false;
+      }
+    }, true); // Use capture phase to intercept before Obsidian handles it
+
     // Register file modification event for both task note sync and debounced full-file processing
     this.registerEvent(
       this.app.vault.on('modify', (file) => {

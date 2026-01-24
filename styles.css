@@ -5,9 +5,12 @@
    Compatible with Minimal theme using -webkit-mask
    ============================================ */
 
-/* Calendar icon (Font Awesome fa-regular fa-calendar) */
+/* Custom icons (Font Awesome) */
 :root {
+  /* fa-regular fa-calendar */
   --calendar-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 448 512'%3E%3Cpath d='M152 24c0-13.3-10.7-24-24-24s-24 10.7-24 24V64H64C28.7 64 0 92.7 0 128v16 48V448c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V192 144 128c0-35.3-28.7-64-64-64H344V24c0-13.3-10.7-24-24-24s-24 10.7-24 24V64H152V24zM48 192H400V448c0 8.8-7.2 16-16 16H64c-8.8 0-16-7.2-16-16V192z'/%3E%3C/svg%3E");
+  /* fa-regular fa-clock */
+  --clock-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cpath d='M464 256A208 208 0 1 1 48 256a208 208 0 1 1 416 0zM0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zM232 120V256c0 8 4 15.5 10.7 20l96 64c11 7.4 25.9 4.4 33.3-6.7s4.4-25.9-6.7-33.3L280 243.2V120c0-13.3-10.7-24-24-24s-24 10.7-24 24z'/%3E%3C/svg%3E");
 }
 
 /* Calendar checkbox styling - Minimal theme compatible */
@@ -23,6 +26,8 @@ li[data-task="c"] > p > input {
   -webkit-mask-size: 80% !important;
   -webkit-mask-position: center !important;
   -webkit-mask-repeat: no-repeat !important;
+  pointer-events: none !important;
+  cursor: default !important;
 }
 
 /* Live Preview checkbox */
@@ -36,11 +41,54 @@ li[data-task="c"] > p > input {
   -webkit-mask-size: 80% !important;
   -webkit-mask-position: center !important;
   -webkit-mask-repeat: no-repeat !important;
+  pointer-events: none !important;
+  cursor: default !important;
 }
 
 /* Calendar event list item - don't strike through */
 .markdown-preview-view li[data-task="c"].task-list-item,
 .markdown-source-view.mod-cm6 .HyperMD-task-line[data-task="c"] {
+  text-decoration: none !important;
+  color: var(--text-normal) !important;
+}
+
+/* ============================================
+   Scheduled Status [>] - Clock Icon
+   ============================================ */
+
+/* Scheduled checkbox styling - Minimal theme compatible */
+input[data-task=">"],
+li[data-task=">"] > input,
+li[data-task=">"] > p > input {
+  --checkbox-marker-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background-image: none !important;
+  background-color: var(--text-muted) !important;
+  -webkit-mask-image: var(--clock-icon) !important;
+  -webkit-mask-size: 80% !important;
+  -webkit-mask-position: center !important;
+  -webkit-mask-repeat: no-repeat !important;
+  transform: rotate(0deg) !important;
+}
+
+/* Live Preview checkbox */
+.markdown-source-view.mod-cm6 .task-list-item-checkbox[data-task=">"] {
+  --checkbox-marker-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background-image: none !important;
+  background-color: var(--text-muted) !important;
+  -webkit-mask-image: var(--clock-icon) !important;
+  -webkit-mask-size: 80% !important;
+  -webkit-mask-position: center !important;
+  -webkit-mask-repeat: no-repeat !important;
+  transform: rotate(0deg) !important;
+}
+
+/* Scheduled task - don't strike through */
+.markdown-preview-view li[data-task=">"].task-list-item,
+.markdown-source-view.mod-cm6 .HyperMD-task-line[data-task=">"] {
   text-decoration: none !important;
   color: var(--text-normal) !important;
 }
