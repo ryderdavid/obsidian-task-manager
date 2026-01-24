@@ -39,7 +39,10 @@ const DEFAULT_SETTINGS = {
   eventNotesFolder: 'Event Notes',
 
   // ICS Calendar Sync
-  enableIcsSync: true
+  enableIcsSync: true,
+
+  // Auto-Archive
+  enableAutoArchive: true
 };
 
 // ============================================================================
@@ -669,6 +672,131 @@ const TaskSorter = {
       result.push(item.line);
       for (const subtask of item.subtasks) {
         result.push(subtask);
+      }
+    }
+
+    return result.join('\n');
+  }
+};
+
+// ============================================================================
+// TASK ARCHIVER MODULE
+// ============================================================================
+
+const TaskArchiver = {
+  // Checkbox states that should be archived
+  ARCHIVE_STATES: /^[\t]*- \[[xX>\-]\]/,
+  // States to keep active
+  ACTIVE_STATES: /^[\t]*- \[[ \/c]\]/,
+  // Callout pattern for existing archive section
+  ARCHIVE_CALLOUT_START: /^> \[!done\]-?\s*Done\s*$/,
+  ARCHIVE_LINE: /^> /,
+
+  /**
+   * Archive completed and scheduled tasks to a collapsed callout section
+   */
+  archiveContent(content, settings) {
+    const lines = content.split('\n');
+    const calendarEvents = [];
+    const activeTasks = [];
+    const archivedTasks = [];
+    const existingArchiveContent = [];
+    let inArchiveSection = false;
+    let i = 0;
+
+    // First pass: categorize all lines
+    while (i < lines.length) {
+      const line = lines[i];
+
+      // Check if entering existing archive section
+      if (this.ARCHIVE_CALLOUT_START.test(line)) {
+        inArchiveSection = true;
+        i++;
+        continue;
+      }
+
+      // If in archive section, collect existing archived content
+      if (inArchiveSection) {
+        if (this.ARCHIVE_LINE.test(line)) {
+          // Strip the "> " prefix and store
+          existingArchiveContent.push(line.substring(2));
+          i++;
+          continue;
+        } else {
+          // End of archive section
+          inArchiveSection = false;
+        }
+      }
+
+      // Calendar events stay at top
+      if (TaskUtils.CALENDAR_EVENT_PATTERN.test(line)) {
+        calendarEvents.push(line);
+        i++;
+        continue;
+      }
+
+      // Check if this is a task that should be archived
+      if (this.ARCHIVE_STATES.test(line)) {
+        const taskGroup = [line];
+        i++;
+        // Collect subtasks
+        while (i < lines.length && TaskUtils.SUBTASK_PATTERN.test(lines[i])) {
+          taskGroup.push(lines[i]);
+          i++;
+        }
+        archivedTasks.push(...taskGroup);
+        continue;
+      }
+
+      // Check if this is an active task
+      if (this.ACTIVE_STATES.test(line)) {
+        const taskGroup = [line];
+        i++;
+        // Collect subtasks
+        while (i < lines.length && TaskUtils.SUBTASK_PATTERN.test(lines[i])) {
+          taskGroup.push(lines[i]);
+          i++;
+        }
+        activeTasks.push(...taskGroup);
+        continue;
+      }
+
+      // Other lines (blank lines, headers, etc.) go with active content
+      if (line.trim() !== '' || activeTasks.length > 0) {
+        activeTasks.push(line);
+      }
+      i++;
+    }
+
+    // Combine archived tasks with any existing archive content
+    const allArchived = [...archivedTasks, ...existingArchiveContent];
+
+    // Build result
+    const result = [];
+
+    // Calendar events first
+    for (const event of calendarEvents) {
+      result.push(event);
+    }
+
+    // Active tasks
+    for (const task of activeTasks) {
+      result.push(task);
+    }
+
+    // Archive section (only if there are archived tasks)
+    if (allArchived.length > 0) {
+      // Add separator if there's content above
+      if (result.length > 0 && result[result.length - 1] !== '') {
+        result.push('');
+      }
+
+      // Collapsible callout header
+      result.push('> [!done]- Done');
+
+      // Add archived tasks with callout prefix
+      for (const line of allArchived) {
+        result.push('> ' + line);
       }
     }
 
@@ -2955,6 +3083,16 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    new obsidian.Setting(containerEl)
+      .setName('Auto-archive completed tasks')
+      .setDesc('Move completed, scheduled, and cancelled tasks to a collapsed section')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableAutoArchive)
+        .onChange(async (value) => {
+          this.plugin.settings.enableAutoArchive = value;
+          await this.plugin.saveSettings();
+        }));
+
     // DISPLAY SECTION
     containerEl.createEl('h3', { text: 'Display' });
 
@@ -3657,6 +3795,15 @@ class TaskManagerPlugin extends obsidian.Plugin {
       // Step 3: Sort (if auto-sort enabled)
       if (this.settings.enableAutoSort) {
         const updated = TaskSorter.sortContent(content, this.settings);
+        if (updated !== content) {
+          content = updated;
+          modified = true;
+        }
+      }
+
+      // Step 4: Archive completed/scheduled tasks (only for non-active files to avoid cursor disruption)
+      if (this.settings.enableAutoArchive && !isActiveFile) {
+        const updated = TaskArchiver.archiveContent(content, this.settings);
         if (updated !== content) {
           content = updated;
           modified = true;
