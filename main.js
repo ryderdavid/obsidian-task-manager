@@ -561,6 +561,103 @@ const TaskSorter = {
     }
 
     return result.join('\n');
+  },
+
+  // Sort all items (tasks and events) by time block, with unscheduled at bottom
+  sortByTimeBlock(content, settings) {
+    const lines = content.split('\n');
+
+    // Pattern to extract time from any line (tasks or events)
+    const TIME_PATTERN = /^[\t]*- \[.\]\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/;
+
+    // Collect all items
+    const scheduledItems = [];  // Items with time blocks (tasks + events)
+    const unscheduledItems = []; // Items without time blocks
+    const otherLines = [];       // Non-task/event lines
+
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const isParentTask = TaskUtils.isParentTask(line);
+      const isCalendarEvent = TaskUtils.isCalendarEvent(line);
+
+      if (isParentTask || isCalendarEvent) {
+        // Extract time block
+        const timeMatch = line.match(TIME_PATTERN);
+
+        // Collect subtasks for parent tasks
+        const subtasks = [];
+        if (isParentTask) {
+          const parentId = TaskUtils.extractId(line);
+          let j = i + 1;
+          while (j < lines.length && TaskUtils.isSubtask(lines[j])) {
+            // Check if subtask belongs to this parent (by parent ID or by position)
+            const subtaskParentId = TaskUtils.extractParentId(lines[j]);
+            if (!subtaskParentId || subtaskParentId === parentId) {
+              subtasks.push(lines[j]);
+            }
+            j++;
+          }
+          i = j; // Skip past subtasks
+        } else {
+          i++;
+        }
+
+        const item = {
+          line,
+          subtasks,
+          isEvent: isCalendarEvent
+        };
+
+        if (timeMatch) {
+          item.startMinutes = parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
+          item.endMinutes = parseInt(timeMatch[3]) * 60 + parseInt(timeMatch[4]);
+          scheduledItems.push(item);
+        } else {
+          unscheduledItems.push(item);
+        }
+      } else if (TaskUtils.isSubtask(line)) {
+        // Orphan subtask - skip (should be collected with parent)
+        i++;
+      } else {
+        otherLines.push({ line, index: i });
+        i++;
+      }
+    }
+
+    // Sort scheduled items by start time, then end time
+    scheduledItems.sort((a, b) => {
+      if (a.startMinutes !== b.startMinutes) {
+        return a.startMinutes - b.startMinutes;
+      }
+      return a.endMinutes - b.endMinutes;
+    });
+
+    // Build result
+    const result = [];
+
+    // Add scheduled items
+    for (const item of scheduledItems) {
+      result.push(item.line);
+      for (const subtask of item.subtasks) {
+        result.push(subtask);
+      }
+    }
+
+    // Add blank line separator before unscheduled if there are any
+    if (unscheduledItems.length > 0 && scheduledItems.length > 0) {
+      result.push('');
+    }
+
+    // Add unscheduled items
+    for (const item of unscheduledItems) {
+      result.push(item.line);
+      for (const subtask of item.subtasks) {
+        result.push(subtask);
+      }
+    }
+
+    return result.join('\n');
   }
 };
 
@@ -1337,6 +1434,208 @@ const TaskScheduler = {
 
     new obsidian.Notice(`Task scheduled to ${targetDate}`);
     return true;
+  }
+};
+
+// ============================================================================
+// BULK SCHEDULER MODULE - Schedule all overdue tasks
+// ============================================================================
+
+const BulkScheduler = {
+  // Pattern for incomplete tasks (not completed, cancelled, scheduled, or in-progress)
+  INCOMPLETE_TASK_PATTERN: /^[\t]*- \[ \]/,
+
+  // Check if a task is incomplete (actionable)
+  isIncompleteTask(line) {
+    return this.INCOMPLETE_TASK_PATTERN.test(line);
+  },
+
+  // Parse date from daily note filename (YYYY-MM-DD.md)
+  parseDateFromFilename(filename) {
+    const match = filename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+  },
+
+  // Get all daily note files from target folders
+  async getDailyNoteFiles(app, settings) {
+    const files = [];
+    const targetFolders = settings.targetFolders || ['00 - Daily/'];
+
+    for (const folder of targetFolders) {
+      const folderPath = folder.replace(/\/$/, '');
+      const abstractFolder = app.vault.getAbstractFileByPath(folderPath);
+      if (!abstractFolder) continue;
+
+      // Get all markdown files in the folder
+      const allFiles = app.vault.getMarkdownFiles();
+      for (const file of allFiles) {
+        if (file.path.startsWith(folderPath + '/') && file.path.endsWith('.md')) {
+          const date = this.parseDateFromFilename(file.basename);
+          if (date) {
+            files.push({ file, date, basename: file.basename });
+          }
+        }
+      }
+    }
+
+    return files;
+  },
+
+  // Find all overdue incomplete tasks across daily notes before targetDate
+  async findOverdueTasks(app, settings, targetDate) {
+    const dailyNotes = await this.getDailyNoteFiles(app, settings);
+    const overdueTasks = [];
+
+    // Filter to notes before target date
+    const targetTime = targetDate.getTime();
+
+    for (const { file, date, basename } of dailyNotes) {
+      // Skip notes on or after target date
+      if (date.getTime() >= targetTime) continue;
+
+      // Read file content
+      const content = await app.vault.read(file);
+      const lines = content.split('\n');
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Find incomplete tasks ([ ]) - not completed [x], not cancelled [-], not scheduled [>], not in-progress [/]
+        if (this.isIncompleteTask(line) && !TaskUtils.isCalendarEvent(line)) {
+          overdueTasks.push({
+            file,
+            fileDate: basename,
+            line,
+            lineNum: i,
+            taskId: TaskUtils.extractId(line)
+          });
+        }
+      }
+    }
+
+    return overdueTasks;
+  },
+
+  // Schedule all overdue tasks to a target date
+  async scheduleAllOverdueTo(app, settings, targetDate) {
+    const targetDateStr = targetDate.toISOString().split('T')[0];
+    const overdueTasks = await this.findOverdueTasks(app, settings, targetDate);
+
+    if (overdueTasks.length === 0) {
+      new obsidian.Notice('No overdue tasks found');
+      return 0;
+    }
+
+    let scheduledCount = 0;
+
+    // Group tasks by source file to batch file modifications
+    const tasksByFile = new Map();
+    for (const task of overdueTasks) {
+      if (!tasksByFile.has(task.file.path)) {
+        tasksByFile.set(task.file.path, []);
+      }
+      tasksByFile.get(task.file.path).push(task);
+    }
+
+    // Get or create the target daily note
+    const targetPath = TaskScheduler.getDailyNotePath(targetDateStr, settings);
+    let targetFile = app.vault.getAbstractFileByPath(targetPath);
+
+    if (!targetFile) {
+      // Create the daily note if it doesn't exist
+      const folder = targetPath.substring(0, targetPath.lastIndexOf('/'));
+      const folderExists = app.vault.getAbstractFileByPath(folder);
+      if (!folderExists) {
+        await app.vault.createFolder(folder);
+      }
+      targetFile = await app.vault.create(targetPath, '');
+    }
+
+    if (!(targetFile instanceof obsidian.TFile)) {
+      new obsidian.Notice('Could not access target daily note');
+      return 0;
+    }
+
+    // Read target file content
+    let targetContent = await app.vault.read(targetFile);
+
+    // Process each source file
+    for (const [filePath, tasks] of tasksByFile) {
+      const sourceFile = app.vault.getAbstractFileByPath(filePath);
+      if (!sourceFile || !(sourceFile instanceof obsidian.TFile)) continue;
+
+      let sourceContent = await app.vault.read(sourceFile);
+      const sourceLines = sourceContent.split('\n');
+      const fromDate = sourceFile.basename;
+
+      // Process tasks in reverse order to maintain line numbers
+      const sortedTasks = tasks.sort((a, b) => b.lineNum - a.lineNum);
+
+      for (const task of sortedTasks) {
+        const line = sourceLines[task.lineNum];
+        if (!line || !this.isIncompleteTask(line)) continue;
+
+        const taskId = TaskUtils.extractId(line);
+
+        // Check if task already exists in target (by ID)
+        let taskExistsInTarget = false;
+        if (taskId) {
+          const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
+          taskExistsInTarget = idPattern.test(targetContent);
+        }
+
+        if (taskExistsInTarget) {
+          // Update existing task in target - reset marker and update from-date
+          const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
+          const targetLines = targetContent.split('\n');
+
+          for (let i = 0; i < targetLines.length; i++) {
+            if (idPattern.test(targetLines[i])) {
+              let updatedLine = targetLines[i];
+              // Reset marker to [ ]
+              updatedLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
+              // Remove old scheduling tags
+              updatedLine = TaskScheduler.removeSchedulingTags(updatedLine);
+              // Add new [< fromDate] tag
+              updatedLine = updatedLine.trimEnd() + ` [< ${fromDate}]`;
+              targetLines[i] = updatedLine;
+              break;
+            }
+          }
+          targetContent = targetLines.join('\n');
+        } else {
+          // Append new copy to target
+          const taskCopy = TaskScheduler.createScheduledTaskCopy(line, fromDate);
+          targetContent = targetContent.trimEnd() + '\n' + taskCopy;
+        }
+
+        // Mark original as scheduled
+        sourceLines[task.lineNum] = TaskScheduler.markTaskAsScheduled(line, targetDateStr);
+        scheduledCount++;
+
+        // Update task note if exists
+        const taskText = TaskNoteManager.extractTaskTextFromLine(line);
+        if (taskText) {
+          await TaskNoteManager.updateTaskNoteSourceFile(
+            app,
+            settings,
+            taskText,
+            targetPath,
+            targetDateStr
+          );
+        }
+      }
+
+      // Write updated source file
+      sourceContent = sourceLines.join('\n');
+      await app.vault.modify(sourceFile, sourceContent);
+    }
+
+    // Write updated target file
+    await app.vault.modify(targetFile, targetContent);
+
+    new obsidian.Notice(`Scheduled ${scheduledCount} overdue task(s) to ${targetDateStr}`);
+    return scheduledCount;
   }
 };
 
@@ -3110,6 +3409,18 @@ class TaskManagerPlugin extends obsidian.Plugin {
     });
 
     this.addCommand({
+      id: 'sort-by-time-block',
+      name: 'Sort all items by time block',
+      editorCallback: (editor, view) => {
+        const content = editor.getValue();
+        const sorted = TaskSorter.sortByTimeBlock(content, this.settings);
+        if (content !== sorted) {
+          editor.setValue(sorted);
+        }
+      }
+    });
+
+    this.addCommand({
       id: 'show-task-info',
       name: 'Show task info for current line',
       editorCallback: (editor, view) => {
@@ -3191,6 +3502,37 @@ class TaskManagerPlugin extends obsidian.Plugin {
         if (checking) return true;
         const popup = new TimePickerPopup(this, editor, cursor.line, 'start');
         popup.open();
+      }
+    });
+
+    // Bulk scheduling commands for overdue tasks
+    this.addCommand({
+      id: 'schedule-overdue-to-today',
+      name: 'Schedule all overdue tasks to today',
+      callback: async () => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        await BulkScheduler.scheduleAllOverdueTo(this.app, this.settings, today);
+      }
+    });
+
+    this.addCommand({
+      id: 'schedule-overdue-to-this-note',
+      name: 'Schedule all overdue tasks to this note\'s date',
+      checkCallback: (checking) => {
+        // Only available when viewing a daily note
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) return false;
+
+        // Check if this is a daily note (YYYY-MM-DD.md in target folder)
+        if (!TaskUtils.shouldProcessFile(activeFile, this.settings)) return false;
+        const noteDate = BulkScheduler.parseDateFromFilename(activeFile.basename);
+        if (!noteDate) return false;
+
+        if (checking) return true;
+
+        // Execute the bulk schedule
+        BulkScheduler.scheduleAllOverdueTo(this.app, this.settings, noteDate);
       }
     });
 
