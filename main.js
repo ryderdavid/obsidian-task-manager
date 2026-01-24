@@ -1443,12 +1443,13 @@ const TimeblockUtils = {
     return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
   },
 
-  // Format time for display (e.g., "9 AM", "12 PM")
+  // Format time for display (e.g., "09 AM", "12 PM")
   formatDisplayTime(hour) {
+    const pad = (n) => n.toString().padStart(2, '0');
     if (hour === 0) return '12 AM';
     if (hour === 12) return '12 PM';
-    if (hour < 12) return `${hour} AM`;
-    return `${hour - 12} PM`;
+    if (hour < 12) return `${pad(hour)} AM`;
+    return `${pad(hour - 12)} PM`;
   },
 
   // Add timeblock to a task line
