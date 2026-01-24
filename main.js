@@ -2728,6 +2728,8 @@ class TaskManagerPlugin extends obsidian.Plugin {
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
           const metadataPattern = /\s*\[(?:id|parent|uid)::\s*[^\]]+\]/g;
+          // Time block pattern: HH:MM - HH:MM at start of task text
+          const timeblockPattern = /^([\t]*- \[.\]\s*)(\d{2}:\d{2}\s*-\s*\d{2}:\d{2})/;
           // Schedule tag patterns: [> YYYY-MM-DD] and [< YYYY-MM-DD]
           const scheduleToPattern = /\s*\[>\s*(\d{4}-\d{2}-\d{2})\]/g;
           const scheduleFromPattern = /\s*\[<\s*(\d{4}-\d{2}-\d{2})\]/g;
@@ -2749,6 +2751,21 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const taskId = TaskUtils.extractId(lineText);
                 const parentId = TaskUtils.extractParentId(lineText);
                 const isParentTask = parentTaskPattern.test(lineText);
+
+                // Add clickable pill styling to time blocks
+                const timeblockMatch = lineText.match(timeblockPattern);
+                if (timeblockMatch) {
+                  const timeblockStart = line.from + timeblockMatch[1].length;
+                  const timeblockEnd = timeblockStart + timeblockMatch[2].length;
+                  decorations.push({
+                    from: timeblockStart,
+                    to: timeblockEnd,
+                    value: Decoration.mark({
+                      class: 'timeblock-pill',
+                      attributes: { 'data-line': String(line.number - 1) }
+                    })
+                  });
+                }
 
                 // Collect schedule dates for unified widget
                 const scheduleToDates = [];
@@ -2947,6 +2964,27 @@ class TaskManagerPlugin extends obsidian.Plugin {
         return false;
       }
     }, true); // Use capture phase to intercept before Obsidian handles it
+
+    // Handle time block pill clicks to open TimePickerPopup
+    this.registerDomEvent(document, 'click', (evt) => {
+      const target = evt.target;
+      const pill = target.closest('.timeblock-pill');
+      if (!pill) return;
+
+      evt.preventDefault();
+      evt.stopPropagation();
+
+      const lineNum = parseInt(pill.dataset.line, 10);
+      if (isNaN(lineNum)) return;
+
+      // Get the active editor
+      const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+      if (!view || !view.editor) return;
+
+      const editor = view.editor;
+      const popup = new TimePickerPopup(this, editor, lineNum, 'start');
+      popup.open();
+    });
 
     // Register file modification event for both task note sync and debounced full-file processing
     this.registerEvent(

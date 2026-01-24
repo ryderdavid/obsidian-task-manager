@@ -262,6 +262,20 @@ li[data-task=">"] > p > input {
   background: rgba(34, 197, 94, 0.25);
 }
 
+/* Time block pill (inline, clickable) */
+.timeblock-pill {
+  background: rgba(251, 146, 60, 0.15);
+  color: var(--text-normal);
+  padding: 1px 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.timeblock-pill:hover {
+  background: rgba(251, 146, 60, 0.3);
+}
+
 /* ============================================
    Slash Command Menu
    ============================================ */
