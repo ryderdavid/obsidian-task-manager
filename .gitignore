@@ -1,6 +1,9 @@
 # Node modules
 node_modules/
 
+# Build output (generated from src/)
+main.js
+
 # Build files
 *.js.map
 

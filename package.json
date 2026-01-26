@@ -1,0 +1,20 @@
+{
+  "name": "obsidian-task-manager",
+  "version": "1.0.0",
+  "description": "Unified task management: IDs, parent-child linking, and chronological sorting",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "install-plugin": "./scripts/install.sh"
+  },
+  "keywords": ["obsidian", "plugin", "tasks"],
+  "author": "Ryder Cobean",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.20.0",
+    "obsidian": "latest",
+    "typescript": "^5.0.0"
+  }
+}
