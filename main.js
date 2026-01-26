@@ -1308,6 +1308,29 @@ sourceFile: "${sourceFilePath || ''}"
 
 ---
 
+## Status
+
+\`\`\`button
+name ✓ Complete
+type command
+action task-manager:set-status-complete
+\`\`\`
+\`\`\`button
+name ◐ In Progress
+type command
+action task-manager:set-status-in-progress
+\`\`\`
+\`\`\`button
+name ○ Incomplete
+type command
+action task-manager:set-status-incomplete
+\`\`\`
+\`\`\`button
+name ✕ Cancelled
+type command
+action task-manager:set-status-cancelled
+\`\`\`
+
 ## Notes
 
 
@@ -3292,6 +3315,38 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    // TASK STATUS SYNC SECTION
+    containerEl.createEl('h3', { text: 'Task Status Sync' });
+
+    new obsidian.Setting(containerEl)
+      .setName('Enable status sync')
+      .setDesc('Sync task status between task notes and daily notes bidirectionally')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableTaskStatusSync)
+        .onChange(async (value) => {
+          this.plugin.settings.enableTaskStatusSync = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new obsidian.Setting(containerEl)
+      .setName('Status mappings')
+      .setDesc('Checkbox marker → status name mappings (JSON format)')
+      .addTextArea(text => {
+        text.inputEl.rows = 8;
+        text.inputEl.cols = 40;
+        text
+          .setValue(JSON.stringify(this.plugin.settings.statusMappings, null, 2))
+          .onChange(async (value) => {
+            try {
+              const parsed = JSON.parse(value);
+              this.plugin.settings.statusMappings = parsed;
+              await this.plugin.saveSettings();
+            } catch (e) {
+              // Invalid JSON, ignore until valid
+            }
+          });
+      });
+
     // DISPLAY SECTION
     containerEl.createEl('h3', { text: 'Display' });
 
@@ -3869,6 +3924,59 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     });
 
+    // Task Note Status Commands (for use with Buttons plugin in task notes)
+    this.addCommand({
+      id: 'set-status-complete',
+      name: 'Set task status: Complete',
+      callback: async () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          new obsidian.Notice('This command only works in task notes');
+          return;
+        }
+        await this.updateTaskNoteStatus(file, 'complete');
+      }
+    });
+
+    this.addCommand({
+      id: 'set-status-incomplete',
+      name: 'Set task status: Incomplete',
+      callback: async () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          new obsidian.Notice('This command only works in task notes');
+          return;
+        }
+        await this.updateTaskNoteStatus(file, 'incomplete');
+      }
+    });
+
+    this.addCommand({
+      id: 'set-status-in-progress',
+      name: 'Set task status: In Progress',
+      callback: async () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          new obsidian.Notice('This command only works in task notes');
+          return;
+        }
+        await this.updateTaskNoteStatus(file, 'in-progress');
+      }
+    });
+
+    this.addCommand({
+      id: 'set-status-cancelled',
+      name: 'Set task status: Cancelled',
+      callback: async () => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          new obsidian.Notice('This command only works in task notes');
+          return;
+        }
+        await this.updateTaskNoteStatus(file, 'cancelled');
+      }
+    });
+
     this.addCommand({
       id: 'schedule-task',
       name: 'Schedule task',
@@ -4073,6 +4181,24 @@ class TaskManagerPlugin extends obsidian.Plugin {
       setTimeout(() => {
         this.isProcessing = false;
       }, 100);
+    }
+  }
+
+  // Helper method to update task note status from commands/buttons
+  async updateTaskNoteStatus(file, newStatus) {
+    const content = await this.app.vault.read(file);
+    const currentStatus = TaskNoteManager.extractFrontmatterField(content, 'status');
+
+    if (currentStatus === newStatus) {
+      new obsidian.Notice(`Status already set to ${newStatus}`);
+      return;
+    }
+
+    const updated = TaskNoteManager.updateFrontmatterField(content, 'status', newStatus);
+    if (updated !== content) {
+      await this.app.vault.modify(file, updated);
+      new obsidian.Notice(`Status changed to ${newStatus}`);
+      // The file modify handler will automatically sync to the daily note
     }
   }
 
