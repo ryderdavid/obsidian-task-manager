@@ -68,7 +68,7 @@ const TaskUtils = {
   ID_PATTERN: /\[id::([^\]]+)\]/,
   PARENT_ID_PATTERN: /\[parent::([^\]]+)\]/,
   METADATA_PATTERN: /\s*\[(?:id|parent|uid)::[^\]]+\]/g,
-  COMPLETED_PATTERN: /^[\t]*- \[[xX]\]/,
+  COMPLETED_PATTERN: /^[\t]*- \[[xX\->]\]/,
   TIMEBLOCK_PATTERN: /^- \[.\]\s*(\d{2}):(\d{2}) - (\d{2}):(\d{2})/,
   CALENDAR_EVENT_PATTERN: /^[\t]*- \[c\]/,
 
