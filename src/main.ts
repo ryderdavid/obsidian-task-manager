@@ -838,9 +838,16 @@ const TaskArchiver = {
 
     // Archive section (only if there are archived tasks)
     if (allArchived.length > 0) {
-      // Add separator if there's content above
-      if (result.length > 0 && result[result.length - 1] !== '') {
-        result.push('');
+      // Add 7 blank lines as separator before archive section
+      if (result.length > 0) {
+        // Remove any trailing blank lines first
+        while (result.length > 0 && result[result.length - 1] === '') {
+          result.pop();
+        }
+        // Add exactly 7 blank lines
+        for (let j = 0; j < 7; j++) {
+          result.push('');
+        }
       }
 
       // Collapsible callout header
