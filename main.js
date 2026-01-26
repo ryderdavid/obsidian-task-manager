@@ -1350,27 +1350,7 @@ sourceFile: "${sourceFilePath || ''}"
 ---
 
 ## Status
-
-\`\`\`button
-name ✓ Complete
-type command
-action task-manager:set-status-complete
-\`\`\`
-\`\`\`button
-name ◐ In Progress
-type command
-action task-manager:set-status-in-progress
-\`\`\`
-\`\`\`button
-name ○ Incomplete
-type command
-action task-manager:set-status-incomplete
-\`\`\`
-\`\`\`button
-name ✕ Cancelled
-type command
-action task-manager:set-status-cancelled
-\`\`\`
+\`BUTTON[btn-incomplete, btn-progress, btn-cancelled, btn-complete]\`
 
 ## Notes
 
@@ -1381,6 +1361,48 @@ ${subtasksContent}
 
 ## References
 
+
+---
+> [!meta]- Button Definitions
+> \`\`\`meta-bind-button
+> label: "○ Incomplete"
+> style: primary
+> id: btn-incomplete
+> hidden: true
+> action:
+>   type: command
+>   command: task-manager:set-status-incomplete
+> \`\`\`
+>
+> \`\`\`meta-bind-button
+> label: "◐ In Progress"
+> style: default
+> id: btn-progress
+> hidden: true
+> action:
+>   type: command
+>   command: task-manager:set-status-in-progress
+> \`\`\`
+>
+> \`\`\`meta-bind-button
+> label: "✕ Cancelled"
+> style: default
+> id: btn-cancelled
+> hidden: true
+> action:
+>   type: command
+>   command: task-manager:set-status-cancelled
+> \`\`\`
+>
+> \`\`\`meta-bind-button
+> label: "✓ Complete"
+> style: default
+> id: btn-complete
+> hidden: true
+> action:
+>   type: command
+>   command: task-manager:set-status-complete
+> \`\`\`
 `;
       file = await app.vault.create(filePath, content);
       new obsidian.Notice(`Created: ${sanitizedName}`);
@@ -4221,12 +4243,40 @@ class TaskManagerPlugin extends obsidian.Plugin {
       return;
     }
 
-    const updated = TaskNoteManager.updateFrontmatterField(content, 'status', newStatus);
+    // Update frontmatter status
+    let updated = TaskNoteManager.updateFrontmatterField(content, 'status', newStatus);
+
+    // Update button highlighting to match new status
+    updated = this.updateButtonHighlighting(updated, newStatus);
+
     if (updated !== content) {
       await this.app.vault.modify(file, updated);
       new obsidian.Notice(`Status changed to ${newStatus}`);
       // The file modify handler will automatically sync to the daily note
     }
+  }
+
+  // Update meta-bind button styles so only the active status has style: primary
+  updateButtonHighlighting(content, activeStatus) {
+    // Map status names to button IDs
+    const statusToButtonId = {
+      'incomplete': 'btn-incomplete',
+      'in-progress': 'btn-progress',
+      'cancelled': 'btn-cancelled',
+      'complete': 'btn-complete'
+    };
+
+    const activeButtonId = statusToButtonId[activeStatus];
+    if (!activeButtonId) return content;
+
+    // Find all meta-bind-button blocks and update their styles
+    // Pattern matches the button block including the id line
+    const buttonBlockRegex = /(```meta-bind-button\n(?:> )?label: "[^"]+"\n(?:> )?style: )(primary|default)(\n(?:> )?id: (btn-[a-z-]+))/g;
+
+    return content.replace(buttonBlockRegex, (match, prefix, currentStyle, suffix, buttonId) => {
+      const newStyle = (buttonId === activeButtonId) ? 'primary' : 'default';
+      return prefix + newStyle + suffix;
+    });
   }
 
   // Process a single line when cursor leaves it (add ID, parent link)
