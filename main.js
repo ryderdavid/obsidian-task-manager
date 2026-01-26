@@ -109,6 +109,47 @@ const TaskUtils = {
     return line.trimEnd() + ` [parent::${parentId}]`;
   },
 
+  /**
+   * Normalize metadata field ordering on a task line.
+   * Ensures all dataview fields and schedule tags are at the end in consistent order:
+   * Task text #tags [id::xxx] [parent::xxx] [< DATE] [> DATE]
+   */
+  normalizeMetadataOrder(line) {
+    if (!this.isTask(line)) return line;
+
+    // Extract the checkbox prefix (including indentation)
+    const prefixMatch = line.match(/^([\t]*- \[.\]\s*)/);
+    if (!prefixMatch) return line;
+    const prefix = prefixMatch[1];
+    let content = line.slice(prefix.length);
+
+    // Extract all metadata fields
+    const idMatch = content.match(/\[id::([^\]]+)\]/);
+    const parentMatch = content.match(/\[parent::([^\]]+)\]/);
+    const uidMatch = content.match(/\[uid::([^\]]+)\]/);
+    const scheduleToMatch = content.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
+    const scheduleFromMatch = content.match(/\[<\s*(\d{4}-\d{2}-\d{2})\]/);
+
+    // Remove all metadata fields from content
+    content = content
+      .replace(/\s*\[id::[^\]]+\]/g, '')
+      .replace(/\s*\[parent::[^\]]+\]/g, '')
+      .replace(/\s*\[uid::[^\]]+\]/g, '')
+      .replace(/\s*\[>\s*\d{4}-\d{2}-\d{2}\]/g, '')
+      .replace(/\s*\[<\s*\d{4}-\d{2}-\d{2}\]/g, '')
+      .trimEnd();
+
+    // Rebuild with metadata at the end in consistent order
+    const parts = [prefix + content];
+    if (idMatch) parts.push(`[id::${idMatch[1]}]`);
+    if (parentMatch) parts.push(`[parent::${parentMatch[1]}]`);
+    if (uidMatch) parts.push(`[uid::${uidMatch[1]}]`);
+    if (scheduleFromMatch) parts.push(`[< ${scheduleFromMatch[1]}]`);
+    if (scheduleToMatch) parts.push(`[> ${scheduleToMatch[1]}]`);
+
+    return parts.join(' ');
+  },
+
   removeParentId(line) {
     return line.replace(/\s*\[parent::[^\]]+\]/, '');
   },
@@ -3446,8 +3487,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
     // Store reference for widgets and closures
     const plugin = this;
 
-    // Debounce timer
-    this.debounceTimer = null;
     this.isProcessing = false;
 
     // Register CodeMirror extension for info buttons and metadata hiding
@@ -3756,18 +3795,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
           return;
         }
 
-        // Handle regular task processing with 5-second debounce (safety net)
-        if (!TaskUtils.shouldProcessFile(file, this.settings)) return;
-
-        // Clear existing timer - resets on every keystroke
-        if (this.debounceTimer) {
-          clearTimeout(this.debounceTimer);
-        }
-
-        // 5-second debounce: only fires when user stops typing for 5 seconds
-        this.debounceTimer = setTimeout(() => {
-          this.processFile(file);
-        }, 5000);
+        // Task ID assignment and parent linking now handled exclusively by
+        // processLineOnLeave() when cursor leaves a line - no background processing
+        // while user is typing to avoid corrupting text mid-edit
       })
     );
 
@@ -4062,9 +4092,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
   onunload() {
     console.log('Task Manager: unloaded');
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer);
-    }
     // Clean up task note sync timers
     if (this.taskNoteSyncTimers) {
       for (const timer of this.taskNoteSyncTimers.values()) {
@@ -4243,6 +4270,13 @@ class TaskManagerPlugin extends obsidian.Plugin {
         newLine = TaskUtils.addParentId(newLine, parentId);
         modified = true;
       }
+    }
+
+    // Normalize metadata ordering (ensure all fields are at end of line)
+    const normalized = TaskUtils.normalizeMetadataOrder(newLine);
+    if (normalized !== newLine) {
+      newLine = normalized;
+      modified = true;
     }
 
     if (modified) {
