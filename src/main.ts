@@ -939,7 +939,8 @@ const TaskNoteManager = {
 
   extractTaskTextFromLine(line) {
     // Match any task marker (space, x, >, /, -, etc.)
-    const taskMatch = line.match(/^- \[.\]\s*(.+)$/);
+    // Also match tasks in callouts (prefixed with "> ") for archive support
+    const taskMatch = line.match(/^(?:>\s*)?- \[.\]\s*(.+)$/);
     if (!taskMatch) return null;
     return this.cleanTaskText(taskMatch[1]);
   },
