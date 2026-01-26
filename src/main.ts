@@ -639,15 +639,41 @@ const TaskSorter = {
 
     // Pattern to extract time from any line (tasks or events)
     const TIME_PATTERN = /^[\t]*- \[.\]\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/;
+    // Pattern to detect archived callout section
+    const ARCHIVE_CALLOUT_START = /^> \[!archived\]-?\s*Archived\s*$/;
+    const ARCHIVE_LINE = /^> /;
 
     // Collect all items
     const scheduledItems = [];  // Items with time blocks (tasks + events)
     const unscheduledItems = []; // Items without time blocks
-    const otherLines = [];       // Non-task/event lines
+    const archivedSection = [];  // Archived callout and its content
 
     let i = 0;
+    let inArchiveSection = false;
+
     while (i < lines.length) {
       const line = lines[i];
+
+      // Check for archived callout section
+      if (ARCHIVE_CALLOUT_START.test(line)) {
+        inArchiveSection = true;
+        archivedSection.push(line);
+        i++;
+        continue;
+      }
+
+      // If in archive section, collect lines until we exit
+      if (inArchiveSection) {
+        if (ARCHIVE_LINE.test(line) || line.trim() === '') {
+          archivedSection.push(line);
+          i++;
+          continue;
+        } else {
+          // Exited archive section
+          inArchiveSection = false;
+        }
+      }
+
       const isParentTask = TaskUtils.isParentTask(line);
       const isCalendarEvent = TaskUtils.isCalendarEvent(line);
 
@@ -690,7 +716,7 @@ const TaskSorter = {
         // Orphan subtask - skip (should be collected with parent)
         i++;
       } else {
-        otherLines.push({ line, index: i });
+        // Skip other lines (empty lines, etc.) - they'll be rebuilt in output
         i++;
       }
     }
@@ -724,6 +750,14 @@ const TaskSorter = {
       result.push(item.line);
       for (const subtask of item.subtasks) {
         result.push(subtask);
+      }
+    }
+
+    // Add archived section at the end if it exists
+    if (archivedSection.length > 0) {
+      result.push('');
+      for (const line of archivedSection) {
+        result.push(line);
       }
     }
 
