@@ -42,7 +42,18 @@ const DEFAULT_SETTINGS = {
   enableIcsSync: true,
 
   // Auto-Archive
-  enableAutoArchive: true
+  enableAutoArchive: true,
+
+  // Task Status Sync
+  enableTaskStatusSync: true,
+  statusMappings: {
+    ' ': 'incomplete',
+    'x': 'complete',
+    'X': 'complete',
+    '/': 'in-progress',
+    '-': 'cancelled',
+    '>': 'scheduled'
+  }
 };
 
 // ============================================================================
@@ -851,6 +862,174 @@ const TaskNoteManager = {
     return this.cleanTaskText(taskMatch[1]);
   },
 
+  extractCheckboxMarker(line) {
+    // Extract the character inside the checkbox brackets
+    const match = line.match(/^[\t]*- \[(.)\]/);
+    return match ? match[1] : null;
+  },
+
+  checkboxToStatus(marker, settings) {
+    return settings.statusMappings[marker] || 'incomplete';
+  },
+
+  statusToCheckbox(status, settings) {
+    // Reverse lookup: find marker for status name
+    for (const [marker, name] of Object.entries(settings.statusMappings)) {
+      if (name === status) return marker;
+    }
+    return ' ';
+  },
+
+  extractFrontmatterField(content, fieldName) {
+    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+    if (!frontmatterMatch) return null;
+    const frontmatter = frontmatterMatch[1];
+    const fieldMatch = frontmatter.match(new RegExp(`^${fieldName}:\\s*"?([^"\\n]*)"?`, 'm'));
+    return fieldMatch ? fieldMatch[1] : null;
+  },
+
+  updateFrontmatterField(content, fieldName, newValue) {
+    const frontmatterMatch = content.match(/^(---\n)([\s\S]*?)(\n---)/);
+    if (!frontmatterMatch) return content;
+
+    const [fullMatch, start, frontmatter, end] = frontmatterMatch;
+    const fieldRegex = new RegExp(`^(${fieldName}:\\s*)"?[^"\\n]*"?`, 'm');
+
+    let updatedFrontmatter;
+    if (fieldRegex.test(frontmatter)) {
+      // Update existing field
+      updatedFrontmatter = frontmatter.replace(fieldRegex, `$1"${newValue}"`);
+    } else {
+      // Add new field at the end of frontmatter
+      updatedFrontmatter = frontmatter + `\n${fieldName}: "${newValue}"`;
+    }
+
+    return content.replace(fullMatch, start + updatedFrontmatter + end);
+  },
+
+  updateTaskCheckbox(content, taskId, newMarker) {
+    const lines = content.split('\n');
+    const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
+
+    for (let i = 0; i < lines.length; i++) {
+      if (idPattern.test(lines[i])) {
+        // Found the task line, update the checkbox marker
+        lines[i] = lines[i].replace(/^([\t]*- \[).(])/, `$1${newMarker}$2`);
+        break;
+      }
+    }
+
+    return lines.join('\n');
+  },
+
+  async findTaskNoteByTaskId(app, taskId, settings) {
+    const folder = settings.taskNotesFolder;
+    const files = app.vault.getFiles().filter(f => f.path.startsWith(folder + '/'));
+
+    for (const file of files) {
+      const content = await app.vault.read(file);
+      const noteTaskId = this.extractFrontmatterField(content, 'taskId');
+      if (noteTaskId === taskId) {
+        return file;
+      }
+    }
+    return null;
+  },
+
+  // ============================================================================
+  // BIDIRECTIONAL STATUS SYNC
+  // ============================================================================
+
+  /**
+   * Sync status from task note frontmatter back to daily note checkbox
+   * Called when task note is modified
+   */
+  async syncStatusToSource(app, taskNote, settings) {
+    if (!settings.enableTaskStatusSync) return;
+
+    const content = await app.vault.read(taskNote);
+    const taskId = this.extractFrontmatterField(content, 'taskId');
+    const status = this.extractFrontmatterField(content, 'status');
+    const sourceFile = this.extractFrontmatterField(content, 'sourceFile');
+
+    if (!taskId || !status || !sourceFile) return;
+
+    const source = app.vault.getAbstractFileByPath(sourceFile);
+    if (!source || !(source instanceof obsidian.TFile)) return;
+
+    const targetMarker = this.statusToCheckbox(status, settings);
+    const sourceContent = await app.vault.read(source);
+
+    // Find the current marker for this task
+    const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
+    const lines = sourceContent.split('\n');
+    for (const line of lines) {
+      if (idPattern.test(line)) {
+        const currentMarker = this.extractCheckboxMarker(line);
+        if (currentMarker === targetMarker) {
+          // No change needed
+          return;
+        }
+        break;
+      }
+    }
+
+    // Update the checkbox in the source file
+    const updated = this.updateTaskCheckbox(sourceContent, taskId, targetMarker);
+    if (updated !== sourceContent) {
+      await app.vault.modify(source, updated);
+    }
+  },
+
+  /**
+   * Sync status from daily note checkbox to task note frontmatter
+   * Called when daily note is modified
+   */
+  async syncStatusToTaskNote(app, taskId, newMarker, settings) {
+    if (!settings.enableTaskStatusSync) return;
+
+    const taskNote = await this.findTaskNoteByTaskId(app, taskId, settings);
+    if (!taskNote) return;
+
+    const newStatus = this.checkboxToStatus(newMarker, settings);
+    const content = await app.vault.read(taskNote);
+    const currentStatus = this.extractFrontmatterField(content, 'status');
+
+    if (currentStatus === newStatus) {
+      // No change needed
+      return;
+    }
+
+    const updated = this.updateFrontmatterField(content, 'status', newStatus);
+    if (updated !== content) {
+      await app.vault.modify(taskNote, updated);
+    }
+  },
+
+  /**
+   * Extract all tasks with IDs from a daily note and sync their status to task notes
+   * Called when daily note is modified (debounced)
+   */
+  async syncAllStatusesToTaskNotes(app, file, settings) {
+    if (!settings.enableTaskStatusSync) return;
+
+    const content = await app.vault.read(file);
+    const lines = content.split('\n');
+
+    for (const line of lines) {
+      const taskId = TaskUtils.extractId(line);
+      if (!taskId) continue;
+
+      // Skip calendar events
+      if (TaskUtils.CALENDAR_EVENT_PATTERN.test(line)) continue;
+
+      const marker = this.extractCheckboxMarker(line);
+      if (marker) {
+        await this.syncStatusToTaskNote(app, taskId, marker, settings);
+      }
+    }
+  },
+
   async getSubtasksFromSource(app, sourceFilePath, parentTaskText) {
     if (!sourceFilePath) return [];
     const sourceFile = app.vault.getAbstractFileByPath(sourceFilePath);
@@ -1083,6 +1262,25 @@ const TaskNoteManager = {
 
     const subtasksFromSource = await this.getSubtasksFromSource(app, sourceFilePath, taskText);
 
+    // Look up the checkbox marker from the source file for status sync
+    let checkboxMarker = ' ';
+    if (sourceFilePath && taskId) {
+      const sourceFile = app.vault.getAbstractFileByPath(sourceFilePath);
+      if (sourceFile instanceof obsidian.TFile) {
+        const sourceContent = await app.vault.read(sourceFile);
+        const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
+        const lines = sourceContent.split('\n');
+        for (const line of lines) {
+          if (idPattern.test(line)) {
+            const marker = this.extractCheckboxMarker(line);
+            if (marker) checkboxMarker = marker;
+            break;
+          }
+        }
+      }
+    }
+    const status = this.checkboxToStatus(checkboxMarker, settings);
+
     let file = app.vault.getAbstractFileByPath(filePath);
     const isNewFile = !file;
 
@@ -1099,6 +1297,7 @@ const TaskNoteManager = {
       const content = `---
 task: "${taskText.replace(/"/g, '\\"')}"
 taskId: "${taskId || ''}"
+status: "${status}"
 created: ${new Date().toISOString().split('T')[0]}
 sourceFile: "${sourceFilePath || ''}"
 ---
@@ -3492,6 +3691,8 @@ class TaskManagerPlugin extends obsidian.Plugin {
               this.taskNoteSyncing = true;
               try {
                 await TaskNoteManager.syncSubtasksBackToSource(this.app, file, false);
+                // Also sync status from task note to daily note
+                await TaskNoteManager.syncStatusToSource(this.app, file, this.settings);
               } finally {
                 setTimeout(() => { this.taskNoteSyncing = false; }, 100);
               }
@@ -3860,6 +4061,12 @@ class TaskManagerPlugin extends obsidian.Plugin {
         } else {
           await this.app.vault.modify(file, content);
         }
+      }
+
+      // Step 5: Sync task statuses to task notes (if enabled)
+      // This runs after all other processing is complete
+      if (this.settings.enableTaskStatusSync && !this.taskNoteSyncing) {
+        await TaskNoteManager.syncAllStatusesToTaskNotes(this.app, file, this.settings);
       }
     } finally {
       // Reset flag after a short delay
