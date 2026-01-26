@@ -490,3 +490,12 @@ li[data-task=">"] > p > input {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
+
+/* ============================================
+   Archived Tasks Callout
+   ============================================ */
+
+.callout[data-callout="archived"] {
+  --callout-color: 128, 128, 128;
+  --callout-icon: lucide-archive;
+}

@@ -741,7 +741,7 @@ const TaskArchiver = {
   // States to keep active
   ACTIVE_STATES: /^[\t]*- \[[ \/c]\]/,
   // Callout pattern for existing archive section
-  ARCHIVE_CALLOUT_START: /^> \[!done\]-?\s*Done\s*$/,
+  ARCHIVE_CALLOUT_START: /^> \[!archived\]-?\s*Archived\s*$/,
   ARCHIVE_LINE: /^> /,
 
   /**
@@ -844,7 +844,7 @@ const TaskArchiver = {
       }
 
       // Collapsible callout header
-      result.push('> [!done]- Done');
+      result.push('> [!archived]- Archived');
 
       // Add archived tasks with callout prefix
       for (const line of allArchived) {
