@@ -2209,7 +2209,9 @@ const Icons = {
   // file-lines (solid) - document with lines icon
   fileLines: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path fill="currentColor" d="M64 0C28.7 0 0 28.7 0 64V448c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V160H256c-17.7 0-32-14.3-32-32V0H64zM256 0V128H384L256 0zM112 256H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16zm0 64H272c8.8 0 16 7.2 16 16s-7.2 16-16 16H112c-8.8 0-16-7.2-16-16s7.2-16 16-16z"/></svg>',
   // clock (regular) - time/clock icon
-  clock: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M464 256A208 208 0 1 1 48 256a208 208 0 1 1 416 0zM0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zM232 120V256c0 8 4 15.5 10.7 20l96 64c11 7.4 25.9 4.4 33.3-6.7s4.4-25.9-6.7-33.3L280 243.2V120c0-13.3-10.7-24-24-24s-24 10.7-24 24z"/></svg>'
+  clock: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M464 256A208 208 0 1 1 48 256a208 208 0 1 1 416 0zM0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zM232 120V256c0 8 4 15.5 10.7 20l96 64c11 7.4 25.9 4.4 33.3-6.7s4.4-25.9-6.7-33.3L280 243.2V120c0-13.3-10.7-24-24-24s-24 10.7-24 24z"/></svg>',
+  // circle-right (solid) - schedule/forward icon
+  circleRight: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M0 256a256 256 0 1 0 512 0A256 256 0 1 0 0 256zM294.6 135.1l99.9 107.1c3.5 3.8 5.5 8.7 5.5 13.8s-2 10.1-5.5 13.8L294.6 376.9c-4.2 4.5-10.1 7.1-16.3 7.1C266 384 256 374 256 361.7l0-57.7-96 0c-17.7 0-32-14.3-32-32l0-32c0-17.7 14.3-32 32-32l96 0 0-57.7c0-12.3 10-22.3 22.3-22.3c6.2 0 12.1 2.6 16.3 7.1z"/></svg>'
 };
 
 // ============================================================================
@@ -2894,6 +2896,91 @@ class ScheduleDatePopup {
 }
 
 // ============================================================================
+// WIDGET-ANCHORED POPUPS (positioned relative to DOM elements)
+// ============================================================================
+
+// Schedule date popup that positions itself relative to an anchor element (for widget clicks)
+class ScheduleDatePopupFromWidget extends ScheduleDatePopup {
+  constructor(plugin, editor, lineNum, anchorEl) {
+    super(plugin, editor, lineNum);
+    this.anchorEl = anchorEl;
+  }
+
+  positionPopup() {
+    if (!this.anchorEl) return;
+
+    const rect = this.anchorEl.getBoundingClientRect();
+    this.container.style.position = 'absolute';
+    this.container.style.left = `${rect.left}px`;
+    this.container.style.top = `${rect.bottom + 5}px`;
+    this.container.style.zIndex = '1000';
+
+    // Ensure popup stays within viewport
+    requestAnimationFrame(() => {
+      const popupRect = this.container.getBoundingClientRect();
+      if (popupRect.right > window.innerWidth) {
+        this.container.style.left = `${window.innerWidth - popupRect.width - 10}px`;
+      }
+      if (popupRect.bottom > window.innerHeight) {
+        this.container.style.top = `${rect.top - popupRect.height - 5}px`;
+      }
+    });
+  }
+}
+
+// Time picker popup that positions itself relative to an anchor element (for widget clicks)
+class TimePickerPopupFromWidget extends TimePickerPopup {
+  constructor(plugin, editor, lineNum, mode, existingStart, onComplete, anchorEl) {
+    super(plugin, editor, lineNum, mode, existingStart, onComplete);
+    this.anchorEl = anchorEl;
+  }
+
+  positionPopup() {
+    if (!this.anchorEl) return;
+
+    const rect = this.anchorEl.getBoundingClientRect();
+    this.container.style.position = 'absolute';
+    this.container.style.left = `${rect.left}px`;
+    this.container.style.top = `${rect.bottom + 5}px`;
+    this.container.style.zIndex = '1000';
+
+    // Ensure popup stays within viewport
+    requestAnimationFrame(() => {
+      const popupRect = this.container.getBoundingClientRect();
+      if (popupRect.right > window.innerWidth) {
+        this.container.style.left = `${window.innerWidth - popupRect.width - 10}px`;
+      }
+      if (popupRect.bottom > window.innerHeight) {
+        this.container.style.top = `${rect.top - popupRect.height - 5}px`;
+      }
+    });
+  }
+
+  selectTime(hour, minute) {
+    this.selectedHour = hour;
+    this.close();
+
+    if (this.mode === 'start') {
+      // Open end time picker - also use widget-anchored version
+      const endPopup = new TimePickerPopupFromWidget(
+        this.plugin,
+        this.editor,
+        this.lineNum,
+        'end',
+        { hour: hour, minute: minute },
+        (endHour, endMinute) => {
+          this.applyTimeblock(hour, minute, endHour, endMinute);
+        },
+        this.anchorEl
+      );
+      endPopup.open();
+    } else if (this.mode === 'end' && this.onComplete) {
+      this.onComplete(hour, minute);
+    }
+  }
+}
+
+// ============================================================================
 // UI COMPONENTS
 // ============================================================================
 
@@ -2997,6 +3084,40 @@ class TaskDecorationsWidget extends WidgetType {
       container.appendChild(btn);
     }
 
+    // Add schedule button (hover-only action button) - only for non-calendar events
+    if (!this.options.isCalendarEvent) {
+      const scheduleBtn = document.createElement('span');
+      scheduleBtn.className = 'task-action-button task-schedule-button';
+      const scheduleIcon = document.createElement('span');
+      scheduleIcon.className = 'task-action-button-icon';
+      scheduleIcon.innerHTML = Icons.circleRight;
+      scheduleBtn.appendChild(scheduleIcon);
+      scheduleBtn.title = 'Schedule task';
+      scheduleBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.plugin.showSchedulePopupFromWidget(scheduleBtn, this.options.lineNum);
+      });
+      container.appendChild(scheduleBtn);
+    }
+
+    // Add timeblock button (hover-only action button) - only for non-calendar events
+    if (!this.options.isCalendarEvent) {
+      const timeblockBtn = document.createElement('span');
+      timeblockBtn.className = 'task-action-button task-timeblock-button';
+      const timeblockIcon = document.createElement('span');
+      timeblockIcon.className = 'task-action-button-icon';
+      timeblockIcon.innerHTML = Icons.clock;
+      timeblockBtn.appendChild(timeblockIcon);
+      timeblockBtn.title = 'Set time block';
+      timeblockBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.plugin.showTimeblockPickerFromWidget(timeblockBtn, this.options.lineNum);
+      });
+      container.appendChild(timeblockBtn);
+    }
+
     return container;
   }
 
@@ -3023,7 +3144,8 @@ class TaskDecorationsWidget extends WidgetType {
       JSON.stringify(other.options.scheduleToDates) === JSON.stringify(this.options.scheduleToDates) &&
       JSON.stringify(other.options.scheduleFromDates) === JSON.stringify(this.options.scheduleFromDates) &&
       other.options.showInfoButton === this.options.showInfoButton &&
-      other.options.showNotesButton === this.options.showNotesButton
+      other.options.showNotesButton === this.options.showNotesButton &&
+      other.options.lineNum === this.options.lineNum
     );
   }
 
@@ -3703,29 +3825,28 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
                 const hasSchedulePills = scheduleToDates.length > 0 || scheduleFromDates.length > 0;
 
-                // Add unified container widget if there's anything to show
-                if (showNotesButton || showInfoButton || hasSchedulePills) {
-                  decorations.push({
-                    from: line.to,
-                    to: line.to,
-                    value: Decoration.widget({
-                      widget: new TaskDecorationsWidget({
-                        taskText: taskText,
-                        taskId: taskId,
-                        parentId: parentId,
-                        uid: uid,
-                        calendarSource: calendarSource,
-                        isCalendarEvent: isCalendarEvent,
-                        eventTimeRange: eventTimeRange,
-                        scheduleToDates: scheduleToDates.length > 0 ? scheduleToDates : null,
-                        scheduleFromDates: scheduleFromDates.length > 0 ? scheduleFromDates : null,
-                        showInfoButton: showInfoButton,
-                        showNotesButton: showNotesButton
-                      }, plugin),
-                      side: 1
-                    })
-                  });
-                }
+                // Add unified container widget - always show for tasks (hover buttons appear on any task)
+                decorations.push({
+                  from: line.to,
+                  to: line.to,
+                  value: Decoration.widget({
+                    widget: new TaskDecorationsWidget({
+                      taskText: taskText,
+                      taskId: taskId,
+                      parentId: parentId,
+                      uid: uid,
+                      calendarSource: calendarSource,
+                      isCalendarEvent: isCalendarEvent,
+                      eventTimeRange: eventTimeRange,
+                      scheduleToDates: scheduleToDates.length > 0 ? scheduleToDates : null,
+                      scheduleFromDates: scheduleFromDates.length > 0 ? scheduleFromDates : null,
+                      showInfoButton: showInfoButton,
+                      showNotesButton: showNotesButton,
+                      lineNum: line.number
+                    }, plugin),
+                    side: 1
+                  })
+                });
               }
 
               pos = line.to + 1;
@@ -4408,6 +4529,26 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     }, uid, isCalendarEvent, calendarSource);
     modal.open();
+  }
+
+  // Show schedule popup positioned relative to a widget element
+  showSchedulePopupFromWidget(anchorEl, lineNum) {
+    const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    if (!view || !view.editor) return;
+
+    const editor = view.editor;
+    const popup = new ScheduleDatePopupFromWidget(this, editor, lineNum, anchorEl);
+    popup.open();
+  }
+
+  // Show timeblock picker positioned relative to a widget element
+  showTimeblockPickerFromWidget(anchorEl, lineNum) {
+    const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    if (!view || !view.editor) return;
+
+    const editor = view.editor;
+    const popup = new TimePickerPopupFromWidget(this, editor, lineNum, 'start', null, null, anchorEl);
+    popup.open();
   }
 }
 

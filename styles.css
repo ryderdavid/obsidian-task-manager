@@ -268,6 +268,50 @@ li[data-task=">"] > p > input {
 }
 
 /* ============================================
+   Hover Action Buttons (Schedule, Timeblock)
+   Hidden by default, shown on task line hover
+   ============================================ */
+
+.task-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  color: var(--text-muted);
+  user-select: none;
+  vertical-align: middle;
+}
+
+.task-action-button-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.task-action-button-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Show action buttons on task line hover */
+.HyperMD-task-line:hover .task-action-button,
+.task-decorations-container:hover .task-action-button {
+  opacity: 0.5;
+}
+
+.task-action-button:hover {
+  opacity: 1 !important;
+  color: var(--text-accent);
+}
+
+/* ============================================
    Slash Command Menu
    ============================================ */
 
