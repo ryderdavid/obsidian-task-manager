@@ -1768,6 +1768,27 @@ const TaskScheduler = {
     return newLine;
   },
 
+  // Extract target date from [> YYYY-MM-DD] tag
+  extractScheduledToDate(line) {
+    const match = line.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
+    return match ? match[1] : null;
+  },
+
+  // Check if a task is scheduled away (has [>] checkbox)
+  isScheduledAway(line) {
+    return /^[\t]*- \[>\]/.test(line);
+  },
+
+  // Reset a scheduled task back to actionable state
+  // Changes [>] to [ ] and removes scheduling tags
+  resetScheduledTask(line) {
+    // Change [>] marker back to [ ]
+    let newLine = line.replace(/^([\t]*- \[)>(\])/, '$1 $2');
+    // Remove all scheduling tags
+    newLine = this.removeSchedulingTags(newLine);
+    return newLine;
+  },
+
   // ============================================================================
   // SCHEDULE TASK TO TARGET DATE
   // ============================================================================
@@ -1928,6 +1949,187 @@ const TaskScheduler = {
 
     new obsidian.Notice(`Task scheduled to ${targetDate}`);
     return true;
+  },
+
+  // ============================================================================
+  // UNSCHEDULE TASK - Reverse a scheduling operation
+  // ============================================================================
+  //
+  // When user runs "Unschedule task" on a scheduled task (has [>] checkbox):
+  //
+  // 1. CURRENT TASK:
+  //    - Marker changes from [>] back to [ ]
+  //    - Remove [> TARGET_DATE] and [< FROM_DATE] tags
+  //    - Subtasks also reset from [>] to [ ]
+  //
+  // 2. TARGET FILE:
+  //    - Find and delete the task (by ID) and its subtasks from target file
+  //    - If task doesn't exist in target, just clean up current task
+  //
+  // 3. TASK NOTE (if exists):
+  //    - Update sourceFile to point to current file
+  //    - Update scheduled field to current date
+  //
+  // ============================================================================
+
+  async unscheduleTask(app, settings, editor, lineNum) {
+    const line = editor.getLine(lineNum);
+
+    // Validate: must be a task
+    if (!TaskUtils.isTask(line)) {
+      new obsidian.Notice('Not a task line');
+      return false;
+    }
+
+    // Validate: must be scheduled away (has [>] marker or [> DATE] tag)
+    const targetDate = this.extractScheduledToDate(line);
+    const hasScheduledMarker = this.isScheduledAway(line);
+
+    if (!targetDate && !hasScheduledMarker) {
+      new obsidian.Notice('Task is not scheduled');
+      return false;
+    }
+
+    const taskId = TaskUtils.extractId(line);
+    const activeFile = app.workspace.getActiveFile();
+    const currentFilePath = activeFile ? activeFile.path : null;
+    const currentDate = activeFile ? activeFile.basename : this.getCurrentDate();
+
+    // -----------------------------------------------------------------------
+    // STEP 1: Reset the current task
+    // -----------------------------------------------------------------------
+    const updatedLine = this.resetScheduledTask(line);
+    editor.setLine(lineNum, updatedLine);
+
+    // -----------------------------------------------------------------------
+    // STEP 2: Reset subtasks (change [>] back to [ ])
+    // -----------------------------------------------------------------------
+    const totalLines = editor.lineCount();
+    for (let i = lineNum + 1; i < totalLines; i++) {
+      const subtaskLine = editor.getLine(i);
+      if (TaskUtils.isSubtask(subtaskLine)) {
+        // Reset subtask marker from [>] to [ ]
+        const resetSubtask = subtaskLine.replace(/^([\t]*- \[)>(\])/, '$1 $2');
+        if (resetSubtask !== subtaskLine) {
+          editor.setLine(i, resetSubtask);
+        }
+      } else {
+        // Stop at first non-subtask line
+        break;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // STEP 3: Delete the scheduled copy from target file (if targetDate exists)
+    // -----------------------------------------------------------------------
+    if (targetDate && taskId) {
+      const targetPath = this.getDailyNotePath(targetDate, settings);
+      const targetFile = app.vault.getAbstractFileByPath(targetPath);
+
+      if (targetFile && targetFile instanceof obsidian.TFile) {
+        let targetContent = await app.vault.read(targetFile);
+        const lines = targetContent.split('\n');
+        const idPattern = new RegExp(`\\[id::\\s*${taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`);
+
+        // Find the task line index
+        let taskLineIndex = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (idPattern.test(lines[i])) {
+            taskLineIndex = i;
+            break;
+          }
+        }
+
+        if (taskLineIndex !== -1) {
+          // Count how many lines to remove (task + its subtasks)
+          let linesToRemove = 1;
+          for (let i = taskLineIndex + 1; i < lines.length; i++) {
+            if (TaskUtils.isSubtask(lines[i])) {
+              linesToRemove++;
+            } else {
+              break;
+            }
+          }
+
+          // Remove the task and its subtasks
+          lines.splice(taskLineIndex, linesToRemove);
+
+          // Clean up: collapse consecutive blank lines
+          targetContent = lines.join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trimEnd();
+
+          await app.vault.modify(targetFile, targetContent);
+        }
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // STEP 4: Update task note (if exists)
+    // -----------------------------------------------------------------------
+    const taskText = TaskNoteManager.extractTaskTextFromLine(line);
+    if (taskText && currentFilePath) {
+      await this.updateTaskNoteForUnschedule(
+        app,
+        settings,
+        taskText,
+        currentFilePath,
+        currentDate
+      );
+    }
+
+    new obsidian.Notice('Task unscheduled');
+    return true;
+  },
+
+  // Update task note when unscheduling - point sourceFile back to current file
+  async updateTaskNoteForUnschedule(app, settings, taskText, currentFilePath, currentDate) {
+    const sanitizedName = TaskNoteManager.sanitizeFilename(taskText);
+    if (!sanitizedName) return false;
+
+    const filePath = `${settings.taskNotesFolder}/${sanitizedName}.md`;
+    const file = app.vault.getAbstractFileByPath(filePath);
+
+    if (!file || !(file instanceof obsidian.TFile)) {
+      return false;
+    }
+
+    let content = await app.vault.read(file);
+    let modified = false;
+
+    // Update sourceFile to point to current file
+    const sourceFileRegex = /^(sourceFile:\s*")([^"]*)(")$/m;
+    const newContent = content.replace(sourceFileRegex, `$1${currentFilePath}$3`);
+    if (newContent !== content) {
+      content = newContent;
+      modified = true;
+    }
+
+    // Update scheduled field to current date
+    const scheduledRegex = /^(scheduled:\s*)(\S+)$/m;
+    if (scheduledRegex.test(content)) {
+      const newScheduledContent = content.replace(scheduledRegex, `$1${currentDate}`);
+      if (newScheduledContent !== content) {
+        content = newScheduledContent;
+        modified = true;
+      }
+    }
+
+    // Update body link
+    const newLink = `[[${currentFilePath.replace(/\.md$/, '')}]]`;
+    const sourceLinkRegex = /^(\*\*Source:\*\*\s*)\[\[[^\]]+\]\]/m;
+    const newBodyContent = content.replace(sourceLinkRegex, `$1${newLink}`);
+    if (newBodyContent !== content) {
+      content = newBodyContent;
+      modified = true;
+    }
+
+    if (modified) {
+      await app.vault.modify(file, content);
+      return true;
+    }
+
+    return false;
   }
 };
 
@@ -4201,6 +4403,28 @@ class TaskManagerPlugin extends obsidian.Plugin {
         if (checking) return true;
         const popup = new ScheduleDatePopup(this, editor, cursor.line);
         popup.open();
+      }
+    });
+
+    this.addCommand({
+      id: 'unschedule-task',
+      name: 'Unschedule task',
+      editorCheckCallback: (checking, editor, view) => {
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        // Must be a task
+        if (!TaskUtils.isTask(line)) return false;
+        // Must be scheduled (has [>] marker or [> DATE] tag)
+        const hasScheduledMarker = /^[\t]*- \[>\]/.test(line);
+        const hasScheduledTag = /\[>\s*\d{4}-\d{2}-\d{2}\]/.test(line);
+        if (!hasScheduledMarker && !hasScheduledTag) return false;
+        if (checking) return true;
+        TaskScheduler.unscheduleTask(
+          this.app,
+          this.settings,
+          editor,
+          cursor.line
+        );
       }
     });
 
