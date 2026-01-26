@@ -276,8 +276,8 @@ li[data-task=">"] > p > input {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   margin-left: 4px;
   cursor: pointer;
   opacity: 0;
