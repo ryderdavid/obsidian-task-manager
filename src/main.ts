@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS = {
 
   // Task Notes
   enableTaskNotes: true,
+  autoCreateTaskNotes: true,
   taskNotesFolder: 'Task Notes',
 
   // Event Notes (for calendar events)
@@ -189,6 +190,49 @@ const TaskUtils = {
   shouldProcessFile(file, settings) {
     if (file.extension !== 'md') return false;
     return settings.targetFolders.some(folder => file.path.includes(folder));
+  },
+
+  /**
+   * Check if the task description text is already wrapped in a wiki link.
+   */
+  hasWikiLink(line) {
+    // Check if line contains [[...]] in the task text portion
+    return /^[\t]*- \[.\].*\[\[/.test(line);
+  },
+
+  /**
+   * Wrap the task description text (not time blocks, tags, or metadata) in a [[wiki link]].
+   * Input:  "- [ ] 13:00 - 15:30 Self evaluation #sei [id::t-xxx]"
+   * Output: "- [ ] 13:00 - 15:30 [[Self evaluation]] #sei [id::t-xxx]"
+   *
+   * Returns null if already linked or no description text found.
+   */
+  wrapTaskTextWithLink(line) {
+    if (!this.isTask(line)) return null;
+    if (this.hasWikiLink(line)) return null;
+
+    // Match: prefix (checkbox + optional timeblock) | description | suffix (tags + metadata)
+    const match = line.match(
+      /^([\t]*- \[.\]\s*(?:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s+)?)(.*?)(\s*(?:#\w+|\[(?:id|parent|uid|calendar)::[^\]]+\]|\[[<>]\s*\d{4}-\d{2}-\d{2}\]).*)$/
+    );
+
+    if (match) {
+      const [, prefix, description, suffix] = match;
+      const trimmedDesc = description.trim();
+      if (!trimmedDesc) return null;
+      return `${prefix}[[${trimmedDesc}]]${suffix}`;
+    }
+
+    // No tags or metadata — try simpler match
+    const simpleMatch = line.match(/^([\t]*- \[.\]\s*(?:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s+)?)(.+)$/);
+    if (simpleMatch) {
+      const [, prefix, description] = simpleMatch;
+      const trimmedDesc = description.trim();
+      if (!trimmedDesc) return null;
+      return `${prefix}[[${trimmedDesc}]]`;
+    }
+
+    return null;
   }
 };
 
@@ -1330,16 +1374,103 @@ const TaskNoteManager = {
    * @param {string} sourceFilePath - Path to the daily note containing this task
    * @param {string} taskId - Optional task ID (e.g., "t-abc123") for linking
    */
-  async openOrCreateTaskNote(app, settings, taskText, sourceFilePath, taskId = null) {
-    const sanitizedName = this.sanitizeFilename(taskText);
-    if (!sanitizedName) {
-      new obsidian.Notice('Could not extract task name');
-      return null;
+  /**
+   * Extract inline fields and tags from a task line for frontmatter sync.
+   */
+  extractFieldsFromLine(line) {
+    const fields = {};
+    const parentMatch = line.match(/\[parent::([^\]]+)\]/);
+    if (parentMatch) fields.parent = parentMatch[1].trim();
+    const schedFromMatch = line.match(/\[<\s*(\d{4}-\d{2}-\d{2})\]/);
+    if (schedFromMatch) fields.scheduledFrom = schedFromMatch[1];
+    const schedToMatch = line.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
+    if (schedToMatch) fields.scheduledTo = schedToMatch[1];
+    const tags = [];
+    const tagRegex = /#(\w+)/g;
+    let tagMatch;
+    while ((tagMatch = tagRegex.exec(line)) !== null) {
+      tags.push(tagMatch[1]);
     }
+    if (tags.length > 0) fields.tags = tags;
+    return fields;
+  },
+
+  /**
+   * Build frontmatter YAML string for a task note.
+   */
+  buildFrontmatter(taskText, taskId, status, sourceFilePath, extraFields = {}) {
+    let yaml = `---\ntask: "${taskText.replace(/"/g, '\\"')}"\ntaskId: "${taskId || ''}"`;
+    yaml += `\nstatus: "${status}"`;
+    yaml += `\ncreated: ${new Date().toISOString().split('T')[0]}`;
+    yaml += `\nsourceFile: "${sourceFilePath || ''}"`;
+    if (extraFields.parent) yaml += `\nparent: "${extraFields.parent}"`;
+    if (extraFields.scheduledFrom) yaml += `\nscheduledFrom: ${extraFields.scheduledFrom}`;
+    if (extraFields.scheduledTo) yaml += `\nscheduledTo: ${extraFields.scheduledTo}`;
+    if (extraFields.tags && extraFields.tags.length > 0) {
+      yaml += `\ntags:\n${extraFields.tags.map(t => `  - ${t}`).join('\n')}`;
+    }
+    yaml += `\n---`;
+    return yaml;
+  },
+
+  /**
+   * Ensures a task note exists for the given task. Creates it if not found.
+   * Does NOT open the note. Returns the file (or null on failure).
+   *
+   * Lookup order:
+   * 1. By taskId in frontmatter (handles renames)
+   * 2. By sanitized filename
+   * 3. Create new if neither found
+   */
+  async ensureTaskNoteExists(app, settings, taskText, sourceFilePath, taskId = null, taskLine = null) {
+    const sanitizedName = this.sanitizeFilename(taskText);
+    if (!sanitizedName) return null;
 
     const folderPath = settings.taskNotesFolder;
     const filePath = `${folderPath}/${sanitizedName}.md`;
 
+    // Try to find existing note by taskId first
+    let file = null;
+    if (taskId) {
+      file = await this.findTaskNoteByTaskId(app, taskId, settings);
+    }
+    // Fall back to filename lookup
+    if (!file) {
+      const existing = app.vault.getAbstractFileByPath(filePath);
+      if (existing instanceof obsidian.TFile) {
+        // Verify this note belongs to this task (check taskId in frontmatter)
+        const content = await app.vault.read(existing);
+        const noteTaskId = this.extractFrontmatterField(content, 'taskId');
+        if (!noteTaskId || noteTaskId === taskId || !taskId) {
+          file = existing;
+        } else {
+          // Name collision — different task. Append task ID to filename.
+          const altPath = `${folderPath}/${sanitizedName} (${taskId}).md`;
+          const altFile = app.vault.getAbstractFileByPath(altPath);
+          if (altFile instanceof obsidian.TFile) {
+            file = altFile;
+          }
+          // If altFile doesn't exist, we'll create at altPath below
+          if (!file) {
+            return await this._createTaskNote(app, settings, taskText, taskId, sourceFilePath, altPath, taskLine);
+          }
+        }
+      }
+    }
+
+    if (file instanceof obsidian.TFile) {
+      // Existing note — sync subtasks and source file
+      const subtasksFromSource = await this.getSubtasksFromSource(app, sourceFilePath, taskText);
+      await this.syncSubtasksToTaskNote(app, file, subtasksFromSource, sourceFilePath);
+      return file;
+    }
+
+    // Create new note
+    return await this._createTaskNote(app, settings, taskText, taskId, sourceFilePath, filePath, taskLine);
+  },
+
+  async _createTaskNote(app, settings, taskText, taskId, sourceFilePath, filePath, taskLine) {
+    const folderPath = settings.taskNotesFolder;
     const folder = app.vault.getAbstractFileByPath(folderPath);
     if (!folder) {
       await app.vault.createFolder(folderPath);
@@ -1366,26 +1497,16 @@ const TaskNoteManager = {
     }
     const status = this.checkboxToStatus(checkboxMarker, settings);
 
-    let file = app.vault.getAbstractFileByPath(filePath);
-    const isNewFile = !file;
+    const subtasksContent = subtasksFromSource.length > 0
+      ? subtasksFromSource.map(st => `- [${st.completed ? 'x' : ' '}] ${st.text}`).join('\n')
+      : '- [ ] ';
 
-    if (!file) {
-      const subtasksContent = subtasksFromSource.length > 0
-        ? subtasksFromSource.map(st => `- [${st.completed ? 'x' : ' '}] ${st.text}`).join('\n')
-        : '- [ ] ';
+    const sourceLink = sourceFilePath ? `[[${sourceFilePath.replace(/\.md$/, '')}]]` : '';
 
-      const sourceLink = sourceFilePath ? `[[${sourceFilePath.replace(/\.md$/, '')}]]` : '';
+    const extraFields = taskLine ? this.extractFieldsFromLine(taskLine) : {};
+    const frontmatter = this.buildFrontmatter(taskText, taskId, status, sourceFilePath, extraFields);
 
-      // Task note frontmatter includes taskId for future reference/lookup
-      // Even if we update sourceFile on schedule, taskId provides a fallback
-      // to find the task across the vault if needed
-      const content = `---
-task: "${taskText.replace(/"/g, '\\"')}"
-taskId: "${taskId || ''}"
-status: "${status}"
-created: ${new Date().toISOString().split('T')[0]}
-sourceFile: "${sourceFilePath || ''}"
----
+    const content = `${frontmatter}
 
 # ${taskText}
 
@@ -1448,16 +1569,21 @@ ${subtasksContent}
 >   command: task-manager:set-status-complete
 > \`\`\`
 `;
-      file = await app.vault.create(filePath, content);
-      new obsidian.Notice(`Created: ${sanitizedName}`);
-    } else if (file instanceof obsidian.TFile) {
-      await this.syncSubtasksToTaskNote(app, file, subtasksFromSource, sourceFilePath);
-    }
+    const file = await app.vault.create(filePath, content);
+    const name = filePath.split('/').pop().replace(/\.md$/, '');
+    new obsidian.Notice(`Created: ${name}`);
+    return file;
+  },
 
+  async openOrCreateTaskNote(app, settings, taskText, sourceFilePath, taskId = null) {
+    const file = await this.ensureTaskNoteExists(app, settings, taskText, sourceFilePath, taskId);
+    if (!file) {
+      new obsidian.Notice('Could not extract task name');
+      return null;
+    }
     if (file instanceof obsidian.TFile) {
       await app.workspace.getLeaf().openFile(file);
     }
-
     return file;
   },
 
@@ -3806,11 +3932,21 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
 
     new obsidian.Setting(containerEl)
       .setName('Enable task notes')
-      .setDesc('Show "notes" button on parent tasks to create/open dedicated task notes')
+      .setDesc('Show "notes" button on parent tasks to open dedicated task notes')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.enableTaskNotes)
         .onChange(async (value) => {
           this.plugin.settings.enableTaskNotes = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new obsidian.Setting(containerEl)
+      .setName('Auto-create task notes')
+      .setDesc('Automatically create a task note and link when cursor leaves a task line')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.autoCreateTaskNotes)
+        .onChange(async (value) => {
+          this.plugin.settings.autoCreateTaskNotes = value;
           await this.plugin.saveSettings();
         }));
 
@@ -4023,12 +4159,19 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const eventTimeRange = isCalendarEvent ? EventNoteManager.extractTimeRange(lineText) : null;
 
                 // Show notes button for parent tasks OR calendar events (with their respective settings)
-                const showTaskNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
+                const showTaskNotesButton = plugin.settings.enableTaskNotes && !plugin.settings.autoCreateTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
                 const showEventNotesButton = plugin.settings.enableEventNotes && isCalendarEvent && uid && taskText && taskText.trim() !== '';
                 const showNotesButton = showTaskNotesButton || showEventNotesButton;
 
                 const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
                 const hasSchedulePills = scheduleToDates.length > 0 || scheduleFromDates.length > 0;
+
+                // Skip widget entirely for empty tasks (no text content)
+                const isEmptyTask = !taskText || !taskText.trim();
+                if (isEmptyTask && !showNotesButton && !showInfoButton && !hasSchedulePills) {
+                  pos = line.to + 1;
+                  continue;
+                }
 
                 // Add unified container widget - always show for tasks (hover buttons appear on any task)
                 decorations.push({
@@ -4718,6 +4861,10 @@ class TaskManagerPlugin extends obsidian.Plugin {
     if (!TaskUtils.isTask(line)) return;
     if (TaskUtils.isCalendarEvent(line)) return;
 
+    // Skip empty tasks (checkbox only, no text content)
+    const textAfterCheckbox = line.replace(/^[\t]*- \[.\]\s*/, '').trim();
+    if (!textAfterCheckbox) return;
+
     let newLine = line;
     let modified = false;
 
@@ -4756,6 +4903,42 @@ class TaskManagerPlugin extends obsidian.Plugin {
       this.isProcessing = true;
       editor.setLine(lineNum, newLine);
       setTimeout(() => { this.isProcessing = false; }, 50);
+    }
+
+    // Auto-create task note and wrap text with link (async, runs after line update)
+    if (this.settings.autoCreateTaskNotes && this.settings.enableTaskNotes && TaskUtils.isParentTask(newLine || line)) {
+      // Re-read the line after any modifications above
+      const currentLine = editor.getLine(lineNum);
+      if (!currentLine || TaskUtils.hasWikiLink(currentLine)) return;
+
+      const taskText = TaskNoteManager.extractTaskTextFromLine(currentLine);
+      if (!taskText || !taskText.trim()) return;
+
+      const taskId = TaskUtils.extractId(currentLine);
+      const sourceFilePath = activeFile.path;
+
+      // Run async note creation and link wrapping
+      (async () => {
+        try {
+          const file = await TaskNoteManager.ensureTaskNoteExists(
+            this.app, this.settings, taskText, sourceFilePath, taskId, currentLine
+          );
+          if (!file) return;
+
+          // Wrap task text with wiki link
+          const lineNow = editor.getLine(lineNum);
+          if (!lineNow || TaskUtils.hasWikiLink(lineNow)) return;
+
+          const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow);
+          if (wrapped && wrapped !== lineNow) {
+            this.isProcessing = true;
+            editor.setLine(lineNum, wrapped);
+            setTimeout(() => { this.isProcessing = false; }, 50);
+          }
+        } catch (err) {
+          console.error('Task Manager: auto-create task note failed', err);
+        }
+      })();
     }
   }
 
