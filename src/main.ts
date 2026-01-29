@@ -4,6 +4,8 @@ const obsidian = require('obsidian');
 const { EditorView, Decoration, ViewPlugin, WidgetType } = require('@codemirror/view');
 const { RangeSetBuilder } = require('@codemirror/state');
 
+declare const __GIT_BRANCH__: string;
+
 // ============================================================================
 // DEFAULT SETTINGS
 // ============================================================================
@@ -4133,6 +4135,34 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     }, true); // Use capture phase to intercept before Obsidian handles it
 
+    // Inline tasks: click to edit, Cmd+click to follow link (#21)
+    this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+      // If Cmd (Mac) or Ctrl (Windows/Linux) is held, allow normal link behavior
+      if (evt.metaKey || evt.ctrlKey) return;
+
+      const target = evt.target as HTMLElement;
+      // Check if the click target is a link (or inside a link) within a task list item
+      const link = target.closest('a.internal-link, a.external-link, a.cm-underline');
+      if (!link) return;
+      const taskItem = link.closest('li.task-list-item, li[data-task]');
+      if (!taskItem) return;
+
+      // Prevent the link from being followed
+      evt.preventDefault();
+      evt.stopPropagation();
+
+      // Place cursor at the link's position in the editor for editing
+      const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+      if (!view || !view.editor) return;
+
+      // Switch to editing mode if in reading/preview mode
+      const viewState = view.leaf.getViewState();
+      if (viewState.state?.mode === 'preview') {
+        viewState.state.mode = 'source';
+        view.leaf.setViewState(viewState);
+      }
+    }, true); // Use capture phase to intercept before Obsidian handles it
+
     // Handle time block pill clicks to open TimePickerPopup
     this.registerDomEvent(document, 'click', (evt) => {
       const target = evt.target;
@@ -4497,6 +4527,12 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
     // Add settings tab
     this.addSettingTab(new TaskManagerSettingTab(this.app, this));
+
+    // Add status bar item showing version and git branch
+    const version = this.manifest.version;
+    const branch = typeof __GIT_BRANCH__ !== 'undefined' ? __GIT_BRANCH__ : 'unknown';
+    const statusBarEl = this.addStatusBarItem();
+    statusBarEl.setText(`Task Manager: v${version} | ${branch}`);
   }
 
   onunload() {

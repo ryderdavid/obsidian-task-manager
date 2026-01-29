@@ -4,7 +4,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PLUGIN_NAME="task-manager"
-DEST="$HOME/Obsidian/Main/.obsidian/plugins/$PLUGIN_NAME"
+VAULT="${1:-$HOME/Obsidian/Main}"
+DEST="$VAULT/.obsidian/plugins/$PLUGIN_NAME"
 
 cd "$PROJECT_DIR"
 
