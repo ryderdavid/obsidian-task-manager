@@ -3992,6 +3992,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
         buildDecorations(view, plugin) {
           const decorations = [];
+          const isSourceMode = !view.dom.closest('.is-live-preview');
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
           const metadataPattern = /\s*\[(?:id|parent|uid|calendar)::\s*[^\]]+\]/g;
@@ -4029,8 +4030,8 @@ class TaskManagerPlugin extends obsidian.Plugin {
                   });
                 }
 
-                // Hide metadata fields if enabled
-                if (plugin.settings.hideMetadataFields) {
+                // Hide metadata fields if enabled (only in Live Preview, not Source Mode)
+                if (plugin.settings.hideMetadataFields && !isSourceMode) {
                   let match;
                   metadataPattern.lastIndex = 0;
                   while ((match = metadataPattern.exec(lineText)) !== null) {
