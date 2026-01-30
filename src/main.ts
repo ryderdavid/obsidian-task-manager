@@ -117,54 +117,6 @@ const TaskUtils = {
     return line.trimEnd() + ` [parent::${parentId}]`;
   },
 
-  /**
-   * Normalize metadata field ordering on a task line.
-   * Ensures all dataview fields and schedule tags are at the end in consistent order:
-   * Task text #tags [id::xxx] [parent::xxx] [< DATE] [> DATE]
-   */
-  normalizeMetadataOrder(line) {
-    if (!this.isTask(line)) return line;
-
-    // Extract the checkbox prefix (including indentation)
-    const prefixMatch = line.match(/^([\t]*- \[.\]\s*)/);
-    if (!prefixMatch) return line;
-    const prefix = prefixMatch[1];
-    let content = line.slice(prefix.length);
-
-    // Extract all metadata fields (text format first, then Dataview, then legacy)
-    const idMatch = content.match(/\[id::([^\]]+)\]/);
-    const parentMatch = content.match(/\[parent::([^\]]+)\]/);
-    const uidMatch = content.match(/\[uid::([^\]]+)\]/);
-    const scheduleToMatch = content.match(/>\[\[(\d{4}-\d{2}-\d{2})\]\]/)
-      || content.match(/\[scheduled_to::\s*\[\[(\d{4}-\d{2}-\d{2})\]\]\]/)
-      || content.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
-    const scheduleFromMatch = content.match(/<\[\[(\d{4}-\d{2}-\d{2})\]\]/)
-      || content.match(/\[scheduled_from::\s*\[\[(\d{4}-\d{2}-\d{2})\]\]\]/)
-      || content.match(/\[<\s*(\d{4}-\d{2}-\d{2})\]/);
-
-    // Remove all metadata fields from content (text, Dataview, and legacy formats)
-    content = content
-      .replace(/\s*\[id::[^\]]+\]/g, '')
-      .replace(/\s*\[parent::[^\]]+\]/g, '')
-      .replace(/\s*\[uid::[^\]]+\]/g, '')
-      .replace(/\s*>\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
-      .replace(/\s*<\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
-      .replace(/\s*\[scheduled_to::\s*\[\[[^\]]*\]\]\]/g, '')
-      .replace(/\s*\[scheduled_from::\s*\[\[[^\]]*\]\]\]/g, '')
-      .replace(/\s*\[>\s*\d{4}-\d{2}-\d{2}\]/g, '')
-      .replace(/\s*\[<\s*\d{4}-\d{2}-\d{2}\]/g, '')
-      .trimEnd();
-
-    // Rebuild with metadata at the end in consistent order (using new format)
-    const parts = [prefix + content];
-    if (idMatch) parts.push(`[id::${idMatch[1]}]`);
-    if (parentMatch) parts.push(`[parent::${parentMatch[1]}]`);
-    if (uidMatch) parts.push(`[uid::${uidMatch[1]}]`);
-    if (scheduleFromMatch) parts.push(`<[[${scheduleFromMatch[1]}]]`);
-    if (scheduleToMatch) parts.push(`>[[${scheduleToMatch[1]}]]`);
-
-    return parts.join(' ');
-  },
 
   removeParentId(line) {
     return line.replace(/\s*\[parent::[^\]]+\]/, '');
@@ -4040,6 +3992,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
         buildDecorations(view, plugin) {
           const decorations = [];
+          const isSourceMode = !view.dom.closest('.is-live-preview');
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
           const metadataPattern = /\s*\[(?:id|parent|uid|calendar)::\s*[^\]]+\]/g;
@@ -4077,8 +4030,8 @@ class TaskManagerPlugin extends obsidian.Plugin {
                   });
                 }
 
-                // Hide metadata fields if enabled
-                if (plugin.settings.hideMetadataFields) {
+                // Hide metadata fields if enabled (only in Live Preview, not Source Mode)
+                if (plugin.settings.hideMetadataFields && !isSourceMode) {
                   let match;
                   metadataPattern.lastIndex = 0;
                   while ((match = metadataPattern.exec(lineText)) !== null) {
@@ -4858,12 +4811,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     }
 
-    // Normalize metadata ordering (ensure all fields are at end of line)
-    const normalized = TaskUtils.normalizeMetadataOrder(newLine);
-    if (normalized !== newLine) {
-      newLine = normalized;
-      modified = true;
-    }
 
     if (modified) {
       this.isProcessing = true;
