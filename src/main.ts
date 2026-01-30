@@ -3463,7 +3463,42 @@ class TimePickerPopupFromWidget extends TimePickerPopup {
 // UI COMPONENTS
 // ============================================================================
 
-// Container widget that holds all task decorations (notes button, pills, info button)
+// Gutter "more" widget - shows a light gray "more" text in the left gutter area
+// on hover of a task line. Clicking opens the task info modal.
+class GutterMoreWidget extends WidgetType {
+  constructor(options, plugin) {
+    super();
+    this.options = options; // { taskText, taskId, parentId, uid, isCalendarEvent, calendarSource }
+    this.plugin = plugin;
+  }
+
+  toDOM() {
+    const el = document.createElement('span');
+    el.className = 'task-gutter-more';
+    el.textContent = 'more';
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.plugin.showTaskInfo(this.options.taskId, this.options.parentId, this.options.taskText, null, null, this.options.uid, this.options.isCalendarEvent, this.options.calendarSource);
+    });
+    return el;
+  }
+
+  eq(other) {
+    return (
+      other.options.taskId === this.options.taskId &&
+      other.options.parentId === this.options.parentId &&
+      other.options.uid === this.options.uid &&
+      other.options.taskText === this.options.taskText
+    );
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
+// Container widget that holds all task decorations (notes button, pills)
 // so they wrap together as a single unit
 class TaskDecorationsWidget extends WidgetType {
   constructor(options, plugin) {
@@ -3476,53 +3511,7 @@ class TaskDecorationsWidget extends WidgetType {
     const container = document.createElement('span');
     container.className = 'task-decorations-container';
 
-    // Add info button if enabled
-    if (this.options.showInfoButton && (this.options.taskId || this.options.parentId || this.options.uid)) {
-      const btn = document.createElement('span');
-      btn.className = 'task-info-button';
-      btn.textContent = '\u24D8'; // ⓘ
-      btn.title = this.options.isCalendarEvent ? 'Event info' : 'Task info';
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.plugin.showTaskInfo(this.options.taskId, this.options.parentId, this.options.taskText, null, null, this.options.uid, this.options.isCalendarEvent, this.options.calendarSource);
-      });
-      container.appendChild(btn);
-    }
 
-    // Add schedule button (hover-only action button) - only for non-calendar events
-    if (!this.options.isCalendarEvent) {
-      const scheduleBtn = document.createElement('span');
-      scheduleBtn.className = 'task-action-button task-schedule-button';
-      const scheduleIcon = document.createElement('span');
-      scheduleIcon.className = 'task-action-button-icon';
-      scheduleIcon.innerHTML = Icons.circleRight;
-      scheduleBtn.appendChild(scheduleIcon);
-      scheduleBtn.title = 'Schedule task';
-      scheduleBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.plugin.showSchedulePopupFromWidget(scheduleBtn, this.options.lineNum);
-      });
-      container.appendChild(scheduleBtn);
-    }
-
-    // Add timeblock button (hover-only action button) - only for non-calendar events
-    if (!this.options.isCalendarEvent) {
-      const timeblockBtn = document.createElement('span');
-      timeblockBtn.className = 'task-action-button task-timeblock-button';
-      const timeblockIcon = document.createElement('span');
-      timeblockIcon.className = 'task-action-button-icon';
-      timeblockIcon.innerHTML = Icons.clock;
-      timeblockBtn.appendChild(timeblockIcon);
-      timeblockBtn.title = 'Set time block';
-      timeblockBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.plugin.showTimeblockPickerFromWidget(timeblockBtn, this.options.lineNum);
-      });
-      container.appendChild(timeblockBtn);
-    }
 
     return container;
   }
@@ -4125,32 +4114,53 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
                 const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
 
-                // Skip widget entirely for empty tasks (no text content)
+                // Add gutter "more" widget at line start (shown on hover)
+                if (showInfoButton) {
+                  decorations.push({
+                    from: line.from,
+                    to: line.from,
+                    value: Decoration.widget({
+                      widget: new GutterMoreWidget({
+                        taskText: taskText,
+                        taskId: taskId,
+                        parentId: parentId,
+                        uid: uid,
+                        isCalendarEvent: isCalendarEvent,
+                        calendarSource: calendarSource
+                      }, plugin),
+                      side: -1
+                    })
+                  });
+                }
+
+                // Skip end-of-line widget if nothing to show
                 const isEmptyTask = !taskText || !taskText.trim();
-                if (isEmptyTask && !showNotesButton && !showInfoButton && !hasSchedulePills) {
+                if (isEmptyTask && !showNotesButton) {
                   pos = line.to + 1;
                   continue;
                 }
 
-                // Add unified container widget - always show for tasks (hover buttons appear on any task)
-                decorations.push({
-                  from: line.to,
-                  to: line.to,
-                  value: Decoration.widget({
-                    widget: new TaskDecorationsWidget({
-                      taskText: taskText,
-                      taskId: taskId,
-                      parentId: parentId,
-                      uid: uid,
-                      calendarSource: calendarSource,
-                      isCalendarEvent: isCalendarEvent,
-                      eventTimeRange: eventTimeRange,
-                      showInfoButton: showInfoButton,
-                      lineNum: line.number
-                    }, plugin),
-                    side: 1
-                  })
-                });
+                // Add unified container widget for notes button and schedule pills
+                if (showNotesButton) {
+                  decorations.push({
+                    from: line.to,
+                    to: line.to,
+                    value: Decoration.widget({
+                      widget: new TaskDecorationsWidget({
+                        taskText: taskText,
+                        taskId: taskId,
+                        parentId: parentId,
+                        uid: uid,
+                        calendarSource: calendarSource,
+                        isCalendarEvent: isCalendarEvent,
+                        eventTimeRange: eventTimeRange,
+                        showInfoButton: false,
+                        lineNum: line.number
+                      }, plugin),
+                      side: 1
+                    })
+                  });
+                }
               }
 
               pos = line.to + 1;
