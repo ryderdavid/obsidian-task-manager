@@ -46,6 +46,11 @@ const DEFAULT_SETTINGS = {
   // Auto-Archive
   enableAutoArchive: true,
 
+  // Shortcut Triggers
+  enableScheduleTrigger: true,    // > opens schedule suggestions
+  enableTimeblockTrigger: true,   // ^ opens timeblock suggestions
+  enableSlashCommandTrigger: true, // / opens slash command suggestions
+
   // Task Status Sync
   enableTaskStatusSync: true,
   statusMappings: {
@@ -125,29 +130,37 @@ const TaskUtils = {
     const prefix = prefixMatch[1];
     let content = line.slice(prefix.length);
 
-    // Extract all metadata fields
+    // Extract all metadata fields (text format first, then Dataview, then legacy)
     const idMatch = content.match(/\[id::([^\]]+)\]/);
     const parentMatch = content.match(/\[parent::([^\]]+)\]/);
     const uidMatch = content.match(/\[uid::([^\]]+)\]/);
-    const scheduleToMatch = content.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
-    const scheduleFromMatch = content.match(/\[<\s*(\d{4}-\d{2}-\d{2})\]/);
+    const scheduleToMatch = content.match(/>\[\[(\d{4}-\d{2}-\d{2})\]\]/)
+      || content.match(/\[scheduled_to::\s*\[\[(\d{4}-\d{2}-\d{2})\]\]\]/)
+      || content.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
+    const scheduleFromMatch = content.match(/<\[\[(\d{4}-\d{2}-\d{2})\]\]/)
+      || content.match(/\[scheduled_from::\s*\[\[(\d{4}-\d{2}-\d{2})\]\]\]/)
+      || content.match(/\[<\s*(\d{4}-\d{2}-\d{2})\]/);
 
-    // Remove all metadata fields from content
+    // Remove all metadata fields from content (text, Dataview, and legacy formats)
     content = content
       .replace(/\s*\[id::[^\]]+\]/g, '')
       .replace(/\s*\[parent::[^\]]+\]/g, '')
       .replace(/\s*\[uid::[^\]]+\]/g, '')
+      .replace(/\s*>\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
+      .replace(/\s*<\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
+      .replace(/\s*\[scheduled_to::\s*\[\[[^\]]*\]\]\]/g, '')
+      .replace(/\s*\[scheduled_from::\s*\[\[[^\]]*\]\]\]/g, '')
       .replace(/\s*\[>\s*\d{4}-\d{2}-\d{2}\]/g, '')
       .replace(/\s*\[<\s*\d{4}-\d{2}-\d{2}\]/g, '')
       .trimEnd();
 
-    // Rebuild with metadata at the end in consistent order
+    // Rebuild with metadata at the end in consistent order (using new format)
     const parts = [prefix + content];
     if (idMatch) parts.push(`[id::${idMatch[1]}]`);
     if (parentMatch) parts.push(`[parent::${parentMatch[1]}]`);
     if (uidMatch) parts.push(`[uid::${uidMatch[1]}]`);
-    if (scheduleFromMatch) parts.push(`[< ${scheduleFromMatch[1]}]`);
-    if (scheduleToMatch) parts.push(`[> ${scheduleToMatch[1]}]`);
+    if (scheduleFromMatch) parts.push(`<[[${scheduleFromMatch[1]}]]`);
+    if (scheduleToMatch) parts.push(`>[[${scheduleToMatch[1]}]]`);
 
     return parts.join(' ');
   },
@@ -914,6 +927,8 @@ const TaskNoteManager = {
     text = text.replace(/#\w+/g, '');
     // Remove task note chain link
     text = text.replace(/🔗\[\[[^\]]+\]\]/g, '');
+    // Remove schedule tags >[[DATE]] and <[[DATE]] (must come before wikilink handling)
+    text = text.replace(/\s*[><]\[\[\d{4}-\d{2}-\d{2}\]\]/g, '');
     // Remove wiki links but keep display text
     text = text.replace(/\[\[([^\]|]+)\|?([^\]]*)\]\]/g, (m, link, display) => display || link);
     // Remove task metadata emojis
@@ -921,9 +936,11 @@ const TaskNoteManager = {
     // Remove button icons
     text = text.replace(/📝/g, '');
     text = text.replace(/🔗/g, '');
+    // Remove Dataview wikilink schedule fields (must come before generic inline field removal)
+    text = text.replace(/\s*\[scheduled_(?:to|from)::\s*\[\[[^\]]*\]\]\]/g, '');
     // Remove inline fields (dataview style)
     text = text.replace(/\s*\[[^\]]+::[^\]]*\]/g, '');
-    // Remove schedule tags [> DATE] and [< DATE]
+    // Remove legacy schedule tags [> DATE] and [< DATE]
     text = text.replace(/\s*\[[<>]\s*\d{4}-\d{2}-\d{2}\]/g, '');
     // Clean up whitespace
     text = text.replace(/\s+/g, ' ').trim();
@@ -1722,6 +1739,13 @@ const TaskScheduler = {
   // Remove existing scheduling tags from a line
   removeSchedulingTags(line) {
     return line
+      // Text format: >[[DATE]] and <[[DATE]]
+      .replace(/\s*>\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
+      .replace(/\s*<\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
+      // Dataview wikilink format
+      .replace(/\s*\[scheduled_from::\s*\[\[[^\]]*\]\]\]/g, '')
+      .replace(/\s*\[scheduled_to::\s*\[\[[^\]]*\]\]\]/g, '')
+      // Previous bracket format
       .replace(/\s*\[<\s*\d{4}-\d{2}-\d{2}\]/g, '')
       .replace(/\s*\[>\s*\d{4}-\d{2}-\d{2}\]/g, '')
       // Legacy format cleanup
@@ -1753,8 +1777,8 @@ const TaskScheduler = {
     // Keep the task ID (same task, different date)
     // Remove parent tags (will be re-linked if needed)
     taskCopy = taskCopy.replace(/\s*\[parent::\s*[^\]]+\]/g, '');
-    // Add sch_from tag: [< YYYY-MM-DD]
-    taskCopy = taskCopy.trimEnd() + ` [< ${fromDate}]`;
+    // Add schedule-from tag with wikilink date
+    taskCopy = taskCopy.trimEnd() + ` <[[${fromDate}]]`;
     return taskCopy;
   },
 
@@ -1766,14 +1790,21 @@ const TaskScheduler = {
     newLine = newLine.replace(/^([\t]*- \[.\]\s*)\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*/, '$1');
     // Remove any existing scheduling tags
     newLine = this.removeSchedulingTags(newLine);
-    // Add sch_to tag: [> YYYY-MM-DD]
-    newLine = newLine.trimEnd() + ` [> ${toDate}]`;
+    // Add schedule-to tag with wikilink date
+    newLine = newLine.trimEnd() + ` >[[${toDate}]]`;
     return newLine;
   },
 
-  // Extract target date from [> YYYY-MM-DD] tag
+  // Extract target date from >[[YYYY-MM-DD]] or legacy formats
   extractScheduledToDate(line) {
-    const match = line.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
+    // Text format: >[[YYYY-MM-DD]]
+    let match = line.match(/>\[\[(\d{4}-\d{2}-\d{2})\]\]/);
+    if (match) return match[1];
+    // Dataview wikilink format
+    match = line.match(/\[scheduled_to::\s*\[\[(\d{4}-\d{2}-\d{2})\]\]\]/);
+    if (match) return match[1];
+    // Legacy bracket format
+    match = line.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
     return match ? match[1] : null;
   },
 
@@ -1801,12 +1832,12 @@ const TaskScheduler = {
   // 1. ORIGINAL TASK (current daily note):
   //    - Marker changes from [ ] to [>] (indicating "scheduled away")
   //    - Time block is removed (task no longer occupies time today)
-  //    - Tag [> YYYY-MM-DD] is added showing where it went
+  //    - Field [scheduled_to:: [[YYYY-MM-DD]]] is added showing where it went
   //
   // 2. TASK AT TARGET (target daily note):
-  //    - If task (by ID) already exists there: UPDATE its [< DATE] tag
-  //    - If task doesn't exist there: APPEND new copy with [< DATE] tag
-  //    - The [< DATE] tag always shows the MOST RECENT source (where it came from)
+  //    - If task (by ID) already exists there: UPDATE its scheduled_from field
+  //    - If task doesn't exist there: APPEND new copy with scheduled_from field
+  //    - The scheduled_from field always shows the MOST RECENT source (where it came from)
   //
   // 3. TASK NOTE (if exists):
   //    - sourceFile updated to point to the TARGET daily note
@@ -1830,7 +1861,7 @@ const TaskScheduler = {
     }
 
     // Check if already scheduled to this date
-    if (line.includes(`[> ${targetDate}]`)) {
+    if (line.includes(`>[[${targetDate}]]`) || line.includes(`[scheduled_to:: [[${targetDate}]]]`) || line.includes(`[> ${targetDate}]`)) {
       new obsidian.Notice('Task already scheduled to this date');
       return false;
     }
@@ -1893,8 +1924,8 @@ const TaskScheduler = {
           updatedLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
           // Remove old scheduling tags
           updatedLine = this.removeSchedulingTags(updatedLine);
-          // Add new [< fromDate] tag
-          updatedLine = updatedLine.trimEnd() + ` [< ${fromDate}]`;
+          // Add schedule-from tag with wikilink date
+          updatedLine = updatedLine.trimEnd() + ` <[[${fromDate}]]`;
           lines[i] = updatedLine;
           break;
         }
@@ -2295,8 +2326,8 @@ const BulkScheduler = {
               updatedLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
               // Remove old scheduling tags
               updatedLine = TaskScheduler.removeSchedulingTags(updatedLine);
-              // Add new [< fromDate] tag
-              updatedLine = updatedLine.trimEnd() + ` [< ${fromDate}]`;
+              // Add schedule-from tag with wikilink date
+              updatedLine = updatedLine.trimEnd() + ` <[[${fromDate}]]`;
               targetLines[i] = updatedLine;
               break;
             }
@@ -2375,8 +2406,9 @@ const ScheduleDateUtils = {
     return this.formatDate(d);
   },
 
-  // Parse and normalize date input (YYYYMMDD or YYYY-MM-DD)
-  parseCustomDate(input) {
+  // Parse and normalize date input flexibly
+  // Supports: YYYY-MM-DD, YYYYMMDD, and natural language via nldates plugin
+  parseCustomDate(input, app) {
     if (!input) return null;
     const cleaned = input.trim();
 
@@ -2390,6 +2422,32 @@ const ScheduleDateUtils = {
       return `${cleaned.slice(0, 4)}-${cleaned.slice(4, 6)}-${cleaned.slice(6, 8)}`;
     }
 
+    // Try natural language parsing via nldates plugin
+    if (app) {
+      const parsed = this.parseNaturalDate(cleaned, app);
+      if (parsed) return parsed;
+    }
+
+    return null;
+  },
+
+  // Parse natural language date string using nldates-obsidian plugin
+  // Returns YYYY-MM-DD string or null
+  parseNaturalDate(input, app) {
+    if (!input || !app) return null;
+    try {
+      const nldates = app.plugins.getPlugin('nldates-obsidian');
+      if (!nldates) return null;
+      const result = nldates.parse(input, 'YYYY-MM-DD');
+      if (result && result.formattedString && result.formattedString !== 'Invalid date') {
+        // Validate the result is actually a date
+        if (/^\d{4}-\d{2}-\d{2}$/.test(result.formattedString)) {
+          return result.formattedString;
+        }
+      }
+    } catch (e) {
+      console.debug('Task Manager: nldates parsing failed for:', input, e);
+    }
     return null;
   }
 };
@@ -2714,8 +2772,12 @@ class TimePickerPopup {
 }
 
 // ============================================================================
-// TIMEBLOCK SHORTCUT SUGGEST (^ triggers TimePickerPopup)
+// TIMEBLOCK SHORTCUT SUGGEST (^ triggers timeblock suggestions)
 // ============================================================================
+
+const TIMEBLOCK_SUGGESTIONS = [
+  { id: 'set-time', label: 'Set Time Block...', icon: Icons.clock },
+];
 
 class TimeblockShortcutSuggest extends obsidian.EditorSuggest {
   constructor(app, plugin) {
@@ -2724,45 +2786,58 @@ class TimeblockShortcutSuggest extends obsidian.EditorSuggest {
   }
 
   onTrigger(cursor, editor, file) {
-    // Only trigger on task lines
+    if (!this.plugin.settings.enableTimeblockTrigger) return null;
+
     const line = editor.getLine(cursor.line);
     if (!TaskUtils.isTask(line)) return null;
 
-    // Find the "^" character before cursor
     const lineUpToCursor = line.substring(0, cursor.ch);
     const triggerIndex = lineUpToCursor.lastIndexOf('^');
 
     if (triggerIndex === -1) return null;
-
-    // Don't trigger if at start of line
     if (triggerIndex === 0) return null;
 
     const beforeTrigger = lineUpToCursor.substring(0, triggerIndex);
-    // Don't trigger if preceded by another ^
     if (beforeTrigger.endsWith('^')) return null;
 
-    // Remove the "^" character
-    const start = { line: cursor.line, ch: triggerIndex };
-    const end = cursor;
-    editor.replaceRange('', start, end);
+    const afterTrigger = lineUpToCursor.substring(triggerIndex + 1);
 
-    // Check for existing timeblock to pre-populate
-    const existingTimeblock = TimeblockUtils.extractTimeblock(line);
+    // Don't trigger if a space was typed after ^ (user wants to keep the character)
+    if (afterTrigger.includes(' ')) return null;
 
-    // Open the time picker popup
-    const popup = new TimePickerPopup(this.plugin, editor, cursor.line, 'start');
-    popup.open();
-
-    return null;
+    return {
+      start: { line: cursor.line, ch: triggerIndex },
+      end: cursor,
+      query: afterTrigger
+    };
   }
 
   getSuggestions(context) {
-    return [];
+    const query = context.query;
+    return TIMEBLOCK_SUGGESTIONS.filter(s =>
+      s.label.toLowerCase().includes(query.toLowerCase())
+    );
   }
 
-  renderSuggestion(suggestion, el) {}
+  renderSuggestion(suggestion, el) {
+    el.addClass('slash-command-item');
+    const iconSpan = el.createSpan({ cls: 'slash-command-icon' });
+    iconSpan.innerHTML = suggestion.icon;
+    el.createSpan({ text: suggestion.label, cls: 'slash-command-label' });
+  }
 
-  selectSuggestion(suggestion, evt) {}
+  selectSuggestion(suggestion, evt) {
+    const { editor } = this.context;
+    const lineNum = this.context.start.line;
+
+    // Remove the ^ and any query text
+    editor.replaceRange('', this.context.start, this.context.end);
+
+    if (suggestion.id === 'set-time') {
+      const popup = new TimePickerPopup(this.plugin, editor, lineNum, 'start');
+      popup.open();
+    }
+  }
 }
 
 // ============================================================================
@@ -2784,6 +2859,8 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
   }
 
   onTrigger(cursor, editor, file) {
+    if (!this.plugin.settings.enableSlashCommandTrigger) return null;
+
     // Only trigger on task lines
     const line = editor.getLine(cursor.line);
     if (!TaskUtils.isTask(line)) return null;
@@ -2798,10 +2875,15 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
     const beforeSlash = lineUpToCursor.substring(0, slashIndex);
     if (/\d$/.test(beforeSlash)) return null;
 
+    const afterSlash = lineUpToCursor.substring(slashIndex + 1);
+
+    // Don't trigger if a space was typed after / (user wants to keep the character)
+    if (afterSlash.includes(' ')) return null;
+
     return {
       start: { line: cursor.line, ch: slashIndex },
       end: cursor,
-      query: lineUpToCursor.substring(slashIndex + 1).toLowerCase()
+      query: afterSlash.toLowerCase()
     };
   }
 
@@ -2854,8 +2936,13 @@ class SlashCommandSuggest extends obsidian.EditorSuggest {
 }
 
 // ============================================================================
-// SCHEDULE SHORTCUT SUGGEST (> triggers ScheduleDatePopup directly)
+// SCHEDULE SHORTCUT SUGGEST (> triggers schedule suggestions)
 // ============================================================================
+
+const SCHEDULE_SUGGESTIONS = [
+  { id: 'tomorrow', label: 'Schedule to Tomorrow', icon: Icons.anglesRight },
+  { id: 'pick-date', label: 'Pick a Date...', icon: Icons.anglesRight },
+];
 
 class ScheduleShortcutSuggest extends obsidian.EditorSuggest {
   constructor(app, plugin) {
@@ -2864,46 +2951,107 @@ class ScheduleShortcutSuggest extends obsidian.EditorSuggest {
   }
 
   onTrigger(cursor, editor, file) {
-    // Only trigger on task lines
+    if (!this.plugin.settings.enableScheduleTrigger) return null;
+
     const line = editor.getLine(cursor.line);
     if (!TaskUtils.isTask(line)) return null;
 
-    // Find the ">" character before cursor
     const lineUpToCursor = line.substring(0, cursor.ch);
     const triggerIndex = lineUpToCursor.lastIndexOf('>');
 
     if (triggerIndex === -1) return null;
-
-    // Don't trigger if at start of line (would be blockquote)
     if (triggerIndex === 0) return null;
 
     const beforeTrigger = lineUpToCursor.substring(0, triggerIndex);
-    // Don't trigger if preceded by another > (nested blockquote)
     if (beforeTrigger.endsWith('>')) return null;
-    // Don't trigger if this > is part of a scheduling tag [> or [<
-    // Check if preceded by "[" (scheduling tag like [> 2026-01-24])
     if (beforeTrigger.endsWith('[')) return null;
 
-    // Immediately open the schedule popup and return null to not show suggest UI
-    // Remove the ">" character first
-    const start = { line: cursor.line, ch: triggerIndex };
-    const end = cursor;
-    editor.replaceRange('', start, end);
+    const afterTrigger = lineUpToCursor.substring(triggerIndex + 1);
 
-    // Open the same ScheduleDatePopup used by the slash command
-    const popup = new ScheduleDatePopup(this.plugin, editor, cursor.line);
-    popup.open();
-
-    return null;
+    return {
+      start: { line: cursor.line, ch: triggerIndex },
+      end: cursor,
+      query: afterTrigger
+    };
   }
 
   getSuggestions(context) {
-    return [];
+    const query = context.query;
+
+    // No query — show default options
+    if (!query) {
+      return SCHEDULE_SUGGESTIONS;
+    }
+
+    // Try flexible date parsing (YYYY-MM-DD, YYYYMMDD, or natural language)
+    const parsed = ScheduleDateUtils.parseCustomDate(query, this.plugin.app);
+    if (parsed) {
+      return [{ id: 'direct-date', label: `Schedule to ${parsed}`, icon: Icons.anglesRight, date: parsed }];
+    }
+
+    // Partial numeric input — show hint
+    if (/^\d+[-]?\d*[-]?\d*$/.test(query) && query.length < 10) {
+      return [{ id: 'typing-date', label: `Type date: YYYY-MM-DD or YYYYMMDD`, icon: Icons.anglesRight, disabled: true }];
+    }
+
+    // Text query — try to match default options, and show nldates hint if available
+    const matches = SCHEDULE_SUGGESTIONS.filter(s =>
+      s.label.toLowerCase().includes(query.toLowerCase())
+    );
+
+    // If no default matches but there's text, show "no match" hint
+    if (matches.length === 0 && query.length > 0) {
+      return [{ id: 'no-match', label: `No date match for "${query}"`, icon: Icons.anglesRight, disabled: true }];
+    }
+
+    return matches;
   }
 
-  renderSuggestion(suggestion, el) {}
+  renderSuggestion(suggestion, el) {
+    el.addClass('slash-command-item');
+    const iconSpan = el.createSpan({ cls: 'slash-command-icon' });
+    iconSpan.innerHTML = suggestion.icon;
+    el.createSpan({ text: suggestion.label, cls: 'slash-command-label' });
+    if (suggestion.disabled) {
+      el.addClass('is-disabled');
+    }
+  }
 
-  selectSuggestion(suggestion, evt) {}
+  selectSuggestion(suggestion, evt) {
+    if (suggestion.disabled) return;
+
+    const { editor } = this.context;
+    const lineNum = this.context.start.line;
+
+    // Remove the > and any query text
+    editor.replaceRange('', this.context.start, this.context.end);
+
+    if (suggestion.id === 'direct-date') {
+      // Schedule to the typed date
+      TaskScheduler.scheduleTask(
+        this.plugin.app,
+        this.plugin.settings,
+        editor,
+        lineNum,
+        suggestion.date
+      );
+    } else if (suggestion.id === 'tomorrow') {
+      // Schedule to tomorrow
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const dateStr = tomorrow.toISOString().split('T')[0];
+      TaskScheduler.scheduleTask(
+        this.plugin.app,
+        this.plugin.settings,
+        editor,
+        lineNum,
+        dateStr
+      );
+    } else if (suggestion.id === 'pick-date') {
+      const popup = new ScheduleDatePopup(this.plugin, editor, lineNum);
+      popup.open();
+    }
+  }
 }
 
 // ============================================================================
@@ -3080,11 +3228,11 @@ class ScheduleDatePopup {
   submitCustomDate() {
     if (!this.customInput) return;
 
-    const parsed = ScheduleDateUtils.parseCustomDate(this.customInput.value);
+    const parsed = ScheduleDateUtils.parseCustomDate(this.customInput.value, this.plugin.app);
     if (parsed) {
       this.scheduleToDate(parsed);
     } else {
-      new obsidian.Notice('Invalid date format. Use YYYY-MM-DD or YYYYMMDD');
+      new obsidian.Notice('Invalid date. Try YYYY-MM-DD, YYYYMMDD, or natural language (e.g. "tomorrow", "next monday")');
     }
   }
 
@@ -3194,86 +3342,13 @@ class TimePickerPopupFromWidget extends TimePickerPopup {
 class TaskDecorationsWidget extends WidgetType {
   constructor(options, plugin) {
     super();
-    this.options = options; // { taskText, taskId, parentId, scheduleToDates, scheduleFromDates, showInfoButton, showNotesButton }
+    this.options = options; // { taskText, taskId, parentId, showInfoButton, lineNum, ... }
     this.plugin = plugin;
   }
 
   toDOM() {
     const container = document.createElement('span');
     container.className = 'task-decorations-container';
-
-    // Add notes button if enabled (for both tasks and calendar events)
-    if (this.options.showNotesButton && this.options.taskText) {
-      const btn = document.createElement('span');
-      btn.className = 'task-note-button';
-      const iconSpan = document.createElement('span');
-      iconSpan.className = 'task-note-button-icon';
-      iconSpan.innerHTML = Icons.fileLines;
-      btn.appendChild(iconSpan);
-      btn.appendChild(document.createTextNode('notes'));
-      btn.setAttribute('aria-label', this.options.isCalendarEvent ? 'Open event note' : 'Open task note');
-      btn.addEventListener('click', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const activeFile = this.plugin.app.workspace.getActiveFile();
-        const sourceFilePath = activeFile ? activeFile.path : null;
-
-        if (this.options.isCalendarEvent) {
-          // Use EventNoteManager for calendar events
-          await EventNoteManager.openOrCreateEventNote(
-            this.plugin.app,
-            this.plugin.settings,
-            this.options.taskText,
-            this.options.uid,
-            sourceFilePath,
-            this.options.eventTimeRange,
-            this.options.calendarSource
-          );
-        } else {
-          // Use TaskNoteManager for regular tasks
-          await TaskNoteManager.openOrCreateTaskNote(
-            this.plugin.app,
-            this.plugin.settings,
-            this.options.taskText,
-            sourceFilePath,
-            this.options.taskId
-          );
-        }
-      });
-      container.appendChild(btn);
-    }
-
-    // Add schedule-to pills
-    if (this.options.scheduleToDates) {
-      for (const date of this.options.scheduleToDates) {
-        const pill = document.createElement('span');
-        pill.className = 'schedule-pill schedule-pill-to';
-        pill.textContent = `→ ${date}`;
-        pill.setAttribute('aria-label', `Go to ${date}`);
-        pill.addEventListener('click', async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          await this.navigateToDate(date);
-        });
-        container.appendChild(pill);
-      }
-    }
-
-    // Add schedule-from pills
-    if (this.options.scheduleFromDates) {
-      for (const date of this.options.scheduleFromDates) {
-        const pill = document.createElement('span');
-        pill.className = 'schedule-pill schedule-pill-from';
-        pill.textContent = `← ${date}`;
-        pill.setAttribute('aria-label', `Go to ${date}`);
-        pill.addEventListener('click', async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          await this.navigateToDate(date);
-        });
-        container.appendChild(pill);
-      }
-    }
 
     // Add info button if enabled
     if (this.options.showInfoButton && (this.options.taskId || this.options.parentId || this.options.uid)) {
@@ -3346,10 +3421,7 @@ class TaskDecorationsWidget extends WidgetType {
       other.options.calendarSource === this.options.calendarSource &&
       other.options.isCalendarEvent === this.options.isCalendarEvent &&
       JSON.stringify(other.options.eventTimeRange) === JSON.stringify(this.options.eventTimeRange) &&
-      JSON.stringify(other.options.scheduleToDates) === JSON.stringify(this.options.scheduleToDates) &&
-      JSON.stringify(other.options.scheduleFromDates) === JSON.stringify(this.options.scheduleFromDates) &&
       other.options.showInfoButton === this.options.showInfoButton &&
-      other.options.showNotesButton === this.options.showNotesButton &&
       other.options.lineNum === this.options.lineNum
     );
   }
@@ -3396,90 +3468,6 @@ class TaskNoteButtonWidget extends WidgetType {
 
   eq(other) {
     return other.taskText === this.taskText && other.taskId === this.taskId;
-  }
-
-  ignoreEvent() {
-    return false;
-  }
-}
-
-// Widget for scheduled-to pill [> YYYY-MM-DD]
-class ScheduledToPillWidget extends WidgetType {
-  constructor(date, plugin) {
-    super();
-    this.date = date;
-    this.plugin = plugin;
-  }
-
-  toDOM() {
-    const pill = document.createElement('span');
-    pill.className = 'schedule-pill schedule-pill-to';
-    pill.textContent = `→ ${this.date}`;
-    pill.setAttribute('aria-label', `Go to ${this.date}`);
-    pill.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      await this.navigateToDate();
-    });
-    return pill;
-  }
-
-  async navigateToDate() {
-    const path = TaskScheduler.getDailyNotePath(this.date, this.plugin.settings);
-    let file = this.plugin.app.vault.getAbstractFileByPath(path);
-    if (!file) {
-      // Create if doesn't exist
-      file = await this.plugin.app.vault.create(path, '');
-    }
-    if (file instanceof obsidian.TFile) {
-      await this.plugin.app.workspace.getLeaf().openFile(file);
-    }
-  }
-
-  eq(other) {
-    return other.date === this.date;
-  }
-
-  ignoreEvent() {
-    return false;
-  }
-}
-
-// Widget for scheduled-from pill [< YYYY-MM-DD]
-class ScheduledFromPillWidget extends WidgetType {
-  constructor(date, plugin) {
-    super();
-    this.date = date;
-    this.plugin = plugin;
-  }
-
-  toDOM() {
-    const pill = document.createElement('span');
-    pill.className = 'schedule-pill schedule-pill-from';
-    pill.textContent = `← ${this.date}`;
-    pill.setAttribute('aria-label', `Go to ${this.date}`);
-    pill.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      await this.navigateToDate();
-    });
-    return pill;
-  }
-
-  async navigateToDate() {
-    const path = TaskScheduler.getDailyNotePath(this.date, this.plugin.settings);
-    let file = this.plugin.app.vault.getAbstractFileByPath(path);
-    if (!file) {
-      // Create if doesn't exist
-      file = await this.plugin.app.vault.create(path, '');
-    }
-    if (file instanceof obsidian.TFile) {
-      await this.plugin.app.workspace.getLeaf().openFile(file);
-    }
-  }
-
-  eq(other) {
-    return other.date === this.date;
   }
 
   ignoreEvent() {
@@ -3801,6 +3789,39 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    // SHORTCUT TRIGGERS SECTION
+    containerEl.createEl('h3', { text: 'Shortcut Triggers' });
+
+    new obsidian.Setting(containerEl)
+      .setName('Enable > schedule trigger')
+      .setDesc('Typing > on a task line shows schedule suggestions')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableScheduleTrigger)
+        .onChange(async (value) => {
+          this.plugin.settings.enableScheduleTrigger = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new obsidian.Setting(containerEl)
+      .setName('Enable ^ timeblock trigger')
+      .setDesc('Typing ^ on a task line shows timeblock suggestions')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableTimeblockTrigger)
+        .onChange(async (value) => {
+          this.plugin.settings.enableTimeblockTrigger = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new obsidian.Setting(containerEl)
+      .setName('Enable / slash command trigger')
+      .setDesc('Typing / on a task line shows command suggestions')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.enableSlashCommandTrigger)
+        .onChange(async (value) => {
+          this.plugin.settings.enableSlashCommandTrigger = value;
+          await this.plugin.saveSettings();
+        }));
+
     // TASK NOTES SECTION
     containerEl.createEl('h3', { text: 'Task Notes' });
 
@@ -3899,12 +3920,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
           const metadataPattern = /\s*\[(?:id|parent|uid|calendar)::\s*[^\]]+\]/g;
           // Time block pattern: HH:MM - HH:MM at start of task text
           const timeblockPattern = /^([\t]*- \[.\]\s*)(\d{2}:\d{2}\s*-\s*\d{2}:\d{2})/;
-          // Schedule tag patterns: [> YYYY-MM-DD] and [< YYYY-MM-DD]
-          const scheduleToPattern = /\s*\[>\s*(\d{4}-\d{2}-\d{2})\]/g;
-          const scheduleFromPattern = /\s*\[<\s*(\d{4}-\d{2}-\d{2})\]/g;
-          // Legacy patterns
-          const legacyScheduleToPattern = /\s*\[sch_to::([^\]]+)\]/g;
-          const legacyScheduleFromPattern = /\s*\[sch_from::([^\]]+)\]/g;
+          // Schedule tags (>[[DATE]], <[[DATE]]) are now visible text — no hiding needed
 
           // Check if we're in the task notes folder (skip task note buttons there)
           const activeFile = plugin.app.workspace.getActiveFile();
@@ -3936,10 +3952,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
                   });
                 }
 
-                // Collect schedule dates for unified widget
-                const scheduleToDates = [];
-                const scheduleFromDates = [];
-
                 // Hide metadata fields if enabled
                 if (plugin.settings.hideMetadataFields) {
                   let match;
@@ -3955,61 +3967,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
                   }
                 }
 
-                // Handle schedule-to tags [> YYYY-MM-DD] - hide raw tags
-                let scheduleToMatch;
-                scheduleToPattern.lastIndex = 0;
-                while ((scheduleToMatch = scheduleToPattern.exec(lineText)) !== null) {
-                  const start = line.from + scheduleToMatch.index;
-                  const end = start + scheduleToMatch[0].length;
-                  scheduleToDates.push(scheduleToMatch[1]);
-                  decorations.push({
-                    from: start,
-                    to: end,
-                    value: Decoration.replace({})
-                  });
-                }
-
-                // Handle schedule-from tags [< YYYY-MM-DD] - hide raw tags
-                let scheduleFromMatch;
-                scheduleFromPattern.lastIndex = 0;
-                while ((scheduleFromMatch = scheduleFromPattern.exec(lineText)) !== null) {
-                  const start = line.from + scheduleFromMatch.index;
-                  const end = start + scheduleFromMatch[0].length;
-                  scheduleFromDates.push(scheduleFromMatch[1]);
-                  decorations.push({
-                    from: start,
-                    to: end,
-                    value: Decoration.replace({})
-                  });
-                }
-
-                // Handle legacy schedule-to tags [sch_to::DATE] - hide raw tags
-                let legacyToMatch;
-                legacyScheduleToPattern.lastIndex = 0;
-                while ((legacyToMatch = legacyScheduleToPattern.exec(lineText)) !== null) {
-                  const start = line.from + legacyToMatch.index;
-                  const end = start + legacyToMatch[0].length;
-                  scheduleToDates.push(legacyToMatch[1]);
-                  decorations.push({
-                    from: start,
-                    to: end,
-                    value: Decoration.replace({})
-                  });
-                }
-
-                // Handle legacy schedule-from tags [sch_from::DATE] - hide raw tags
-                let legacyFromMatch;
-                legacyScheduleFromPattern.lastIndex = 0;
-                while ((legacyFromMatch = legacyScheduleFromPattern.exec(lineText)) !== null) {
-                  const start = line.from + legacyFromMatch.index;
-                  const end = start + legacyFromMatch[0].length;
-                  scheduleFromDates.push(legacyFromMatch[1]);
-                  decorations.push({
-                    from: start,
-                    to: end,
-                    value: Decoration.replace({})
-                  });
-                }
+                // Schedule tags (>[[DATE]], <[[DATE]]) are visible text — no hiding needed
+                // Legacy schedule tags ([> DATE], [scheduled_to::], [sch_to::]) are still
+                // readable by the scheduling system but no longer hidden/decorated
 
                 // Determine what to show in the unified container
                 const isCalendarEvent = TaskUtils.isCalendarEvent(lineText);
@@ -4022,13 +3982,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                   : TaskNoteManager.extractTaskTextFromLine(lineText);
                 const eventTimeRange = isCalendarEvent ? EventNoteManager.extractTimeRange(lineText) : null;
 
-                // Show notes button for parent tasks OR calendar events (with their respective settings)
-                const showTaskNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
-                const showEventNotesButton = plugin.settings.enableEventNotes && isCalendarEvent && uid && taskText && taskText.trim() !== '';
-                const showNotesButton = showTaskNotesButton || showEventNotesButton;
-
                 const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
-                const hasSchedulePills = scheduleToDates.length > 0 || scheduleFromDates.length > 0;
 
                 // Add unified container widget - always show for tasks (hover buttons appear on any task)
                 decorations.push({
@@ -4043,10 +3997,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                       calendarSource: calendarSource,
                       isCalendarEvent: isCalendarEvent,
                       eventTimeRange: eventTimeRange,
-                      scheduleToDates: scheduleToDates.length > 0 ? scheduleToDates : null,
-                      scheduleFromDates: scheduleFromDates.length > 0 ? scheduleFromDates : null,
                       showInfoButton: showInfoButton,
-                      showNotesButton: showNotesButton,
                       lineNum: line.number
                     }, plugin),
                     side: 1
@@ -4445,9 +4396,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
         const line = editor.getLine(cursor.line);
         // Must be a task
         if (!TaskUtils.isTask(line)) return false;
-        // Must be scheduled (has [>] marker or [> DATE] tag)
+        // Must be scheduled (has [>] marker or >[[DATE]] tag or legacy formats)
         const hasScheduledMarker = /^[\t]*- \[>\]/.test(line);
-        const hasScheduledTag = /\[>\s*\d{4}-\d{2}-\d{2}\]/.test(line);
+        const hasScheduledTag = />\[\[\d{4}-\d{2}-\d{2}\]\]/.test(line) || /\[scheduled_to::\s*\[\[\d{4}-\d{2}-\d{2}\]\]\]/.test(line) || /\[>\s*\d{4}-\d{2}-\d{2}\]/.test(line);
         if (!hasScheduledMarker && !hasScheduledTag) return false;
         if (checking) return true;
         TaskScheduler.unscheduleTask(
