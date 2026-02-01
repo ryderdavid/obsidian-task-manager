@@ -34,7 +34,6 @@ const DEFAULT_SETTINGS = {
 
   // Task Notes
   enableTaskNotes: true,
-  autoCreateTaskNotes: true,
   taskNotesFolder: 'Task Notes',
 
   // Event Notes (for calendar events)
@@ -3903,16 +3902,6 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
         }));
 
     new obsidian.Setting(containerEl)
-      .setName('Auto-create task notes')
-      .setDesc('Automatically create a task note and link when cursor leaves a task line')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.autoCreateTaskNotes)
-        .onChange(async (value) => {
-          this.plugin.settings.autoCreateTaskNotes = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new obsidian.Setting(containerEl)
       .setName('Task notes folder')
       .setDesc('Folder where task notes will be created')
       .addText(text => text
@@ -4061,7 +4050,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const eventTimeRange = isCalendarEvent ? EventNoteManager.extractTimeRange(lineText) : null;
 
                 // Show notes button for parent tasks OR calendar events (with their respective settings)
-                const showTaskNotesButton = plugin.settings.enableTaskNotes && !plugin.settings.autoCreateTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
+                const showTaskNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
                 const showEventNotesButton = plugin.settings.enableEventNotes && isCalendarEvent && uid && taskText && taskText.trim() !== '';
                 const showNotesButton = showTaskNotesButton || showEventNotesButton;
 
@@ -4534,6 +4523,77 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     });
 
+    this.addCommand({
+      id: 'create-task-note',
+      name: 'Create task note and link',
+      editorCheckCallback: (checking, editor, view) => {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || !TaskUtils.shouldProcessFile(activeFile, this.settings)) return false;
+        if (!this.settings.enableTaskNotes) return false;
+
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+
+        if (!TaskUtils.isTask(line)) return false;
+        if (TaskUtils.isCalendarEvent(line)) return false;
+        if (!TaskUtils.isParentTask(line)) return false;
+        if (TaskUtils.hasWikiLink(line)) return false;
+
+        const textAfterCheckbox = line.replace(/^[\t]*- \[.\]\s*/, '').trim();
+        if (!textAfterCheckbox) return false;
+
+        if (checking) return true;
+
+        // Ensure task has an ID
+        let currentLine = line;
+        if (this.settings.enableTaskIds && !TaskUtils.extractId(currentLine)) {
+          currentLine = TaskUtils.addId(currentLine, TaskUtils.generateId(this.settings));
+          this.isProcessing = true;
+          editor.setLine(cursor.line, currentLine);
+          setTimeout(() => { this.isProcessing = false; }, 50);
+        }
+
+        const taskText = TaskNoteManager.extractTaskTextFromLine(currentLine);
+        if (!taskText || !taskText.trim()) {
+          new obsidian.Notice('Could not extract task text');
+          return;
+        }
+
+        const taskId = TaskUtils.extractId(currentLine);
+        const sourceFilePath = activeFile.path;
+
+        (async () => {
+          try {
+            const file = await TaskNoteManager.ensureTaskNoteExists(
+              this.app, this.settings, taskText, sourceFilePath, taskId, currentLine
+            );
+            if (!file) {
+              new obsidian.Notice('Failed to create task note');
+              return;
+            }
+
+            const lineNow = editor.getLine(cursor.line);
+            if (!lineNow || TaskUtils.hasWikiLink(lineNow)) {
+              new obsidian.Notice('Task note created');
+              return;
+            }
+
+            const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow);
+            if (wrapped && wrapped !== lineNow) {
+              this.isProcessing = true;
+              editor.setLine(cursor.line, wrapped);
+              setTimeout(() => { this.isProcessing = false; }, 50);
+            }
+
+            new obsidian.Notice('Task note created and linked');
+          } catch (err) {
+            console.error('Task Manager: create task note failed', err);
+            new obsidian.Notice('Error creating task note');
+          }
+        })();
+      }
+    });
+
     // Bulk scheduling commands for overdue tasks
     this.addCommand({
       id: 'schedule-overdue-to-today',
@@ -4816,42 +4876,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
       this.isProcessing = true;
       editor.setLine(lineNum, newLine);
       setTimeout(() => { this.isProcessing = false; }, 50);
-    }
-
-    // Auto-create task note and wrap text with link (async, runs after line update)
-    if (this.settings.autoCreateTaskNotes && this.settings.enableTaskNotes && TaskUtils.isParentTask(newLine || line)) {
-      // Re-read the line after any modifications above
-      const currentLine = editor.getLine(lineNum);
-      if (!currentLine || TaskUtils.hasWikiLink(currentLine)) return;
-
-      const taskText = TaskNoteManager.extractTaskTextFromLine(currentLine);
-      if (!taskText || !taskText.trim()) return;
-
-      const taskId = TaskUtils.extractId(currentLine);
-      const sourceFilePath = activeFile.path;
-
-      // Run async note creation and link wrapping
-      (async () => {
-        try {
-          const file = await TaskNoteManager.ensureTaskNoteExists(
-            this.app, this.settings, taskText, sourceFilePath, taskId, currentLine
-          );
-          if (!file) return;
-
-          // Wrap task text with wiki link
-          const lineNow = editor.getLine(lineNum);
-          if (!lineNow || TaskUtils.hasWikiLink(lineNow)) return;
-
-          const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow);
-          if (wrapped && wrapped !== lineNow) {
-            this.isProcessing = true;
-            editor.setLine(lineNum, wrapped);
-            setTimeout(() => { this.isProcessing = false; }, 50);
-          }
-        } catch (err) {
-          console.error('Task Manager: auto-create task note failed', err);
-        }
-      })();
     }
   }
 
