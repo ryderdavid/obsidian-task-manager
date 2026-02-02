@@ -4385,20 +4385,22 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 // cursor corruption that inserts spaces into field values (#30)
                 if (plugin.settings.hideMetadataFields && !isSourceMode && metadataPattern) {
                   let match;
-                  let hasMetadata = false;
+                  let hasMutedMetadata = false;
+                  let hasHiddenMetadata = false;
                   metadataPattern.lastIndex = 0;
                   while ((match = metadataPattern.exec(lineText)) !== null) {
                     const start = line.from + match.index;
                     const end = start + match[0].length;
                     if (line.number === cursorLine) {
                       // On cursor line: style subtly instead of hiding
-                      hasMetadata = true;
+                      hasMutedMetadata = true;
                       decorations.push({
                         from: start,
                         to: end,
                         value: Decoration.mark({ class: 'task-metadata-muted' })
                       });
                     } else {
+                      hasHiddenMetadata = true;
                       decorations.push({
                         from: start,
                         to: end,
@@ -4407,11 +4409,18 @@ class TaskManagerPlugin extends obsidian.Plugin {
                     }
                   }
                   // Add line class so CSS can target Dataview's sibling spans too
-                  if (hasMetadata) {
+                  if (hasMutedMetadata) {
                     decorations.push({
                       from: line.from,
                       to: line.from,
                       value: Decoration.line({ attributes: { class: 'has-muted-metadata' } })
+                    });
+                  }
+                  if (hasHiddenMetadata) {
+                    decorations.push({
+                      from: line.from,
+                      to: line.from,
+                      value: Decoration.line({ attributes: { class: 'has-hidden-metadata' } })
                     });
                   }
                 }

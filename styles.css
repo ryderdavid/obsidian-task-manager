@@ -550,7 +550,7 @@ li[data-task=">"] > p > input {
   font-family: var(--font-text) !important;
 }
 
-/* Dataview's rendered inline field spans (sibling to our mark, child of .cm-line) */
+/* Dataview's rendered inline field spans on cursor line - style subtly */
 .has-muted-metadata .dataview.inline-field-key,
 .has-muted-metadata .dataview.inline-field-value,
 .has-muted-metadata .dataview.inline-field-standalone-value {
@@ -573,6 +573,13 @@ li[data-task=">"] > p > input {
 /* Space between fields and between text and first field */
 .has-muted-metadata .dataview.inline-field-key {
   margin-left: 0.5em !important;
+}
+
+/* Dataview's rendered inline field spans on non-cursor lines - fully hide */
+.has-hidden-metadata .dataview.inline-field-key,
+.has-hidden-metadata .dataview.inline-field-value,
+.has-hidden-metadata .dataview.inline-field-standalone-value {
+  display: none !important;
 }
 
 /* ============================================
