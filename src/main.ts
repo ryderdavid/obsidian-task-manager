@@ -2559,24 +2559,40 @@ const BulkScheduler = {
       return content.trimEnd() + '\n' + taskLines.join('\n');
     }
 
-    // Find insertion point: after existing content under this header,
-    // before the next header of same or higher level (or end of file)
+    // Find insertion point: after the last task line under this header,
+    // stopping at code fences, next headers, or other structural content
     let insertIndex = headerIndex + 1;
-    if (headerLevel > 0) {
-      const nextHeaderPattern = new RegExp('^#{1,' + headerLevel + '}\\s');
-      for (let i = headerIndex + 1; i < lines.length; i++) {
-        if (nextHeaderPattern.test(lines[i])) {
-          break;
-        }
-        insertIndex = i + 1;
+    const nextHeaderPattern = headerLevel > 0
+      ? new RegExp('^#{1,' + headerLevel + '}\\s')
+      : null;
+    let lastTaskIndex = -1;
+
+    for (let i = headerIndex + 1; i < lines.length; i++) {
+      const ln = lines[i];
+      // Stop at next header of same or higher level
+      if (nextHeaderPattern && nextHeaderPattern.test(ln)) break;
+      // Stop at code fences (``` blocks)
+      if (ln.trim().startsWith('```')) break;
+      // Track last task line (including indented subtasks)
+      if (/^[\t]*- \[.\]/.test(ln)) {
+        lastTaskIndex = i;
       }
-    } else {
-      insertIndex = lines.length;
     }
 
-    // Back up past trailing blank lines to insert right after last content line
-    while (insertIndex > headerIndex + 1 && lines[insertIndex - 1].trim() === '') {
-      insertIndex--;
+    if (lastTaskIndex >= 0) {
+      // Insert after the last task line
+      insertIndex = lastTaskIndex + 1;
+    } else {
+      // No tasks yet under header — insert right after the header
+      insertIndex = headerIndex + 1;
+      // Skip past any blank lines immediately after the header
+      while (insertIndex < lines.length && lines[insertIndex].trim() === '') {
+        insertIndex++;
+      }
+      // But if we hit a code fence or another header, back up to right after header
+      if (insertIndex > headerIndex + 1) {
+        insertIndex = headerIndex + 1;
+      }
     }
 
     // Insert task lines
