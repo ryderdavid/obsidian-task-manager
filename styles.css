@@ -110,7 +110,7 @@ li[data-task=">"] > p > input {
 /* Gutter "more" button - shown on task line hover */
 .task-gutter-more {
   position: absolute;
-  right: calc(100% + 4px);
+  right: calc(100% + 22px);
   top: 50%;
   transform: translateY(-50%);
   white-space: nowrap;
@@ -460,7 +460,8 @@ li[data-task=">"] > p > input {
 }
 
 .timeblock-picker-row:hover .timeblock-picker-hour,
-.timeblock-picker-row.is-expanded .timeblock-picker-hour {
+.timeblock-picker-row.is-expanded .timeblock-picker-hour,
+.timeblock-picker-row.is-keyboard-focused .timeblock-picker-hour {
   background: var(--background-secondary);
 }
 
@@ -477,7 +478,8 @@ li[data-task=">"] > p > input {
 }
 
 .timeblock-picker-row:hover .timeblock-picker-row-minutes,
-.timeblock-picker-row.is-expanded .timeblock-picker-row-minutes {
+.timeblock-picker-row.is-expanded .timeblock-picker-row-minutes,
+.timeblock-picker-row.is-keyboard-focused .timeblock-picker-row-minutes {
   display: flex;
 }
 
@@ -494,7 +496,8 @@ li[data-task=">"] > p > input {
   transition: all 0.1s ease;
 }
 
-.timeblock-picker-minute-btn:hover {
+.timeblock-picker-minute-btn:hover,
+.timeblock-picker-minute-btn.is-keyboard-focused {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
@@ -517,4 +520,77 @@ li[data-task=">"] > p > input {
 .callout[data-callout="archived"] {
   --callout-color: 128, 128, 128;
   --callout-icon: lucide-archive;
+}
+
+/* ============================================
+   Metadata fields revealed on cursor line
+   Subtle styling so they don't clutter the view
+   ============================================ */
+
+/* Non-cursor lines: visually hide metadata fields using Decoration.mark
+   instead of Decoration.replace to prevent cursor corruption (#30) */
+.task-metadata-hidden {
+  display: inline-block !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  visibility: hidden !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+}
+
+/* Cursor line: style subtly instead of hiding */
+.task-metadata-muted {
+  font-size: 0.75em !important;
+  opacity: 0.5 !important;
+  color: var(--text-muted) !important;
+  font-family: var(--font-text) !important;
+}
+
+/* Dataview's rendered inline field spans (sibling to our mark, child of .cm-line) */
+.has-muted-metadata .dataview.inline-field-key,
+.has-muted-metadata .dataview.inline-field-value,
+.has-muted-metadata .dataview.inline-field-standalone-value {
+  font-size: 0.75em !important;
+  opacity: 0.5 !important;
+  color: var(--text-muted) !important;
+  font-family: var(--font-text) !important;
+  background: none !important;
+  background-color: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Add :: separator between key and value */
+.has-muted-metadata .dataview.inline-field-key::after {
+  content: '::';
+}
+
+/* Space between fields and between text and first field */
+.has-muted-metadata .dataview.inline-field-key {
+  margin-left: 0.5em !important;
+}
+
+/* ============================================
+   Priority Markers (!, !!, !!!)
+   Progressive red shading on task lines
+   ============================================ */
+
+.HyperMD-task-line[data-priority="1"] {
+  background: rgba(220, 100, 80, 0.08);
+  border-radius: 4px;
+}
+
+.HyperMD-task-line[data-priority="2"] {
+  background: rgba(220, 80, 60, 0.16);
+  border-radius: 4px;
+}
+
+.HyperMD-task-line[data-priority="3"] {
+  background: rgba(220, 60, 40, 0.28);
+  border-radius: 4px;
 }

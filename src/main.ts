@@ -31,10 +31,10 @@ const DEFAULT_SETTINGS = {
   // UI
   showInfoButton: true,
   hideMetadataFields: true,
+  hiddenMetadataFieldNames: 'id, parent, uid, calendar, priority',
 
   // Task Notes
   enableTaskNotes: true,
-  autoCreateTaskNotes: true,
   taskNotesFolder: 'Task Notes',
 
   // Event Notes (for calendar events)
@@ -120,6 +120,29 @@ const TaskUtils = {
 
   removeParentId(line) {
     return line.replace(/\s*\[parent::[^\]]+\]/, '');
+  },
+
+  extractPriority(line) {
+    const match = line.match(/\[priority::\s*(\d+)\]/);
+    return match ? parseInt(match[1]) : null;
+  },
+
+  detectPriorityMarker(line) {
+    const match = line.match(/^[\t]*- \[.\]\s*(?:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s+)?(!!!|!!|!)\s/);
+    return match ? match[1].length : null;
+  },
+
+  addPriority(line, level) {
+    const existing = this.extractPriority(line);
+    if (existing === level) return line;
+    if (existing !== null) {
+      return line.replace(/\[priority::\s*\d+\]/, `[priority::${level}]`);
+    }
+    return line.trimEnd() + ` [priority::${level}]`;
+  },
+
+  removePriority(line) {
+    return line.replace(/\s*\[priority::\s*\d+\]/, '');
   },
 
   isTask(line) {
@@ -2626,6 +2649,11 @@ const TimeblockUtils = {
 // ============================================================================
 
 class TimePickerPopup {
+  // Layout mapping: column 0 = DAY (6-17), column 1 = NIGHT (18-23, 0-5)
+  static DAY_HOURS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+  static NIGHT_HOURS = [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5];
+  static MINUTES = [0, 15, 30, 45];
+
   constructor(plugin, editor, lineNum, mode, existingStart = null, onComplete = null) {
     this.plugin = plugin;
     this.editor = editor;
@@ -2637,18 +2665,81 @@ class TimePickerPopup {
     this.expandedHour = null; // For mobile: tracks which hour row is expanded
     this.container = null;
 
+    // Keyboard navigation state
+    this.focusedColumn = 0; // 0 = DAY, 1 = NIGHT
+    this.focusedRowIndex = 0; // 0-11 index within column
+    this.minutePhase = false; // true = selecting minute within focused hour
+    this.focusedMinuteIndex = 0; // 0-3 index into MINUTES array
+
     this.handleKeyDown = this.handleKeyDown.bind(this);
     this.handleClickOutside = this.handleClickOutside.bind(this);
+  }
+
+  /** Get the hours array for a column index */
+  getColumnHours(col) {
+    return col === 0 ? TimePickerPopup.DAY_HOURS : TimePickerPopup.NIGHT_HOURS;
+  }
+
+  /** Get the hour value for current focused position */
+  getFocusedHour() {
+    return this.getColumnHours(this.focusedColumn)[this.focusedRowIndex];
+  }
+
+  /** Initialize keyboard focus to a sensible default hour */
+  initFocus() {
+    if (this.mode === 'end' && this.existingStart) {
+      // Focus the suggested end hour
+      const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
+      this.setFocusToHour(defaultEnd.hour);
+    } else {
+      // Focus current hour (clamp to DAY column if before 6 AM)
+      const now = new Date();
+      let currentHour = now.getHours();
+      if (currentHour < 6) currentHour = 9; // Default to 9 AM for very early hours
+      this.setFocusToHour(currentHour);
+    }
+  }
+
+  /** Set focus to a specific hour value, finding it in the layout */
+  setFocusToHour(hour) {
+    const dayIdx = TimePickerPopup.DAY_HOURS.indexOf(hour);
+    if (dayIdx !== -1) {
+      this.focusedColumn = 0;
+      this.focusedRowIndex = dayIdx;
+      return;
+    }
+    const nightIdx = TimePickerPopup.NIGHT_HOURS.indexOf(hour);
+    if (nightIdx !== -1) {
+      this.focusedColumn = 1;
+      this.focusedRowIndex = nightIdx;
+      return;
+    }
+    // Fallback
+    this.focusedColumn = 0;
+    this.focusedRowIndex = 3; // 9 AM
+  }
+
+  /** Scroll the focused row into view within the scroll container */
+  scrollFocusedIntoView() {
+    if (!this.container) return;
+    const focused = this.container.querySelector('.timeblock-picker-row.is-keyboard-focused');
+    if (focused) {
+      focused.scrollIntoView({ block: 'nearest' });
+    }
   }
 
   open() {
     this.container = document.createElement('div');
     this.container.className = 'timeblock-picker-popup';
 
+    this.initFocus();
     this.render();
     this.positionPopup();
 
     document.body.appendChild(this.container);
+
+    // Scroll default-focused hour into view after layout
+    requestAnimationFrame(() => this.scrollFocusedIntoView());
 
     document.addEventListener('keydown', this.handleKeyDown, true);
     setTimeout(() => {
@@ -2718,11 +2809,18 @@ class TimePickerPopup {
   createHourRow(hour) {
     const row = document.createElement('div');
     row.className = 'timeblock-picker-row';
+    row.dataset.hour = String(hour);
 
     // Check if this hour is expanded (for mobile click-to-expand)
     const isExpanded = this.expandedHour === hour;
     if (isExpanded) {
       row.addClass('is-expanded');
+    }
+
+    // Keyboard focus state
+    const isFocused = hour === this.getFocusedHour();
+    if (isFocused) {
+      row.addClass('is-keyboard-focused');
     }
 
     // Highlight suggested time in end mode
@@ -2749,16 +2847,23 @@ class TimePickerPopup {
 
     row.appendChild(hourLabel);
 
-    // Minute options container (shown on hover or when expanded)
+    // Minute options container (shown on hover, when expanded, or when keyboard-focused)
     const minuteOptions = document.createElement('div');
     minuteOptions.className = 'timeblock-picker-row-minutes';
 
-    for (const minute of [0, 15, 30, 45]) {
+    const minutes = TimePickerPopup.MINUTES;
+    for (let i = 0; i < minutes.length; i++) {
+      const minute = minutes[i];
       const btn = document.createElement('button');
       btn.className = 'timeblock-picker-minute-btn';
 
       if (suggestedMinute === minute) {
         btn.addClass('is-suggested');
+      }
+
+      // Keyboard focus on specific minute button
+      if (isFocused && this.minutePhase && this.focusedMinuteIndex === i) {
+        btn.addClass('is-keyboard-focused');
       }
 
       btn.textContent = minute.toString().padStart(2, '0');
@@ -2835,10 +2940,99 @@ class TimePickerPopup {
   }
 
   handleKeyDown(e) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      this.close();
+    const maxRow = 11; // 12 hours per column, 0-indexed
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        e.stopPropagation();
+        if (!this.minutePhase) {
+          this.focusedRowIndex = Math.min(this.focusedRowIndex + 1, maxRow);
+          this.render();
+          this.scrollFocusedIntoView();
+        }
+        break;
+
+      case 'ArrowUp':
+        e.preventDefault();
+        e.stopPropagation();
+        if (!this.minutePhase) {
+          this.focusedRowIndex = Math.max(this.focusedRowIndex - 1, 0);
+          this.render();
+          this.scrollFocusedIntoView();
+        }
+        break;
+
+      case 'ArrowRight':
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.minutePhase) {
+          this.focusedMinuteIndex = Math.min(this.focusedMinuteIndex + 1, 3);
+          this.render();
+        } else {
+          // Switch to NIGHT column (or stay if already there)
+          if (this.focusedColumn === 0) {
+            this.focusedColumn = 1;
+            this.render();
+            this.scrollFocusedIntoView();
+          }
+        }
+        break;
+
+      case 'ArrowLeft':
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.minutePhase) {
+          this.focusedMinuteIndex = Math.max(this.focusedMinuteIndex - 1, 0);
+          this.render();
+        } else {
+          // Switch to DAY column (or stay if already there)
+          if (this.focusedColumn === 1) {
+            this.focusedColumn = 0;
+            this.render();
+            this.scrollFocusedIntoView();
+          }
+        }
+        break;
+
+      case 'Enter':
+      case 'Tab':
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.minutePhase) {
+          // Select the focused time
+          const hour = this.getFocusedHour();
+          const minute = TimePickerPopup.MINUTES[this.focusedMinuteIndex];
+          this.selectTime(hour, minute);
+        } else {
+          // Enter minute selection phase
+          this.minutePhase = true;
+          this.focusedMinuteIndex = 0;
+
+          // If there's a suggested minute in end mode, default to it
+          if (this.mode === 'end' && this.existingStart) {
+            const defaultEnd = TimeblockUtils.getDefaultEndTime(this.existingStart.hour, this.existingStart.minute);
+            if (this.getFocusedHour() === defaultEnd.hour) {
+              const sugIdx = TimePickerPopup.MINUTES.indexOf(defaultEnd.minute);
+              if (sugIdx !== -1) this.focusedMinuteIndex = sugIdx;
+            }
+          }
+
+          this.render();
+        }
+        break;
+
+      case 'Escape':
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.minutePhase) {
+          // Back to hour selection
+          this.minutePhase = false;
+          this.render();
+        } else {
+          this.close();
+        }
+        break;
     }
   }
 
@@ -3848,11 +4042,22 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
 
     new obsidian.Setting(containerEl)
       .setName('Hide metadata fields')
-      .setDesc('Hide [id::...] and [parent::...] fields in the editor')
+      .setDesc('Hide inline Dataview fields in the editor (e.g. [id::...], [parent::...])')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.hideMetadataFields)
         .onChange(async (value) => {
           this.plugin.settings.hideMetadataFields = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new obsidian.Setting(containerEl)
+      .setName('Hidden field names')
+      .setDesc('Comma-separated list of Dataview field names to hide (e.g. id, parent, uid, calendar)')
+      .addText(text => text
+        .setPlaceholder('id, parent, uid, calendar')
+        .setValue(this.plugin.settings.hiddenMetadataFieldNames)
+        .onChange(async (value) => {
+          this.plugin.settings.hiddenMetadataFieldNames = value;
           await this.plugin.saveSettings();
         }));
 
@@ -3899,16 +4104,6 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
         .setValue(this.plugin.settings.enableTaskNotes)
         .onChange(async (value) => {
           this.plugin.settings.enableTaskNotes = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new obsidian.Setting(containerEl)
-      .setName('Auto-create task notes')
-      .setDesc('Automatically create a task note and link when cursor leaves a task line')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.autoCreateTaskNotes)
-        .onChange(async (value) => {
-          this.plugin.settings.autoCreateTaskNotes = value;
           await this.plugin.saveSettings();
         }));
 
@@ -3985,7 +4180,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
         }
 
         update(update) {
-          if (update.docChanged || update.viewportChanged) {
+          if (update.docChanged || update.viewportChanged || update.selectionSet) {
             this.decorations = this.buildDecorations(update.view, plugin);
           }
         }
@@ -3993,9 +4188,21 @@ class TaskManagerPlugin extends obsidian.Plugin {
         buildDecorations(view, plugin) {
           const decorations = [];
           const isSourceMode = !view.dom.closest('.is-live-preview');
+          // Get cursor line to skip Decoration.replace on it (prevents backwards typing bug)
+          const cursorHead = view.state.selection.main.head;
+          const cursorLine = cursorHead != null
+            ? view.state.doc.lineAt(cursorHead).number
+            : -1;
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
-          const metadataPattern = /\s*\[(?:id|parent|uid|calendar)::\s*[^\]]+\]/g;
+          // Build metadata pattern from configured field names
+          const fieldNames = plugin.settings.hiddenMetadataFieldNames
+            .split(',')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+          const metadataPattern = fieldNames.length > 0
+            ? new RegExp(`\\s*\\[(?:${fieldNames.join('|')})::\\s*[^\\]]+\\]`, 'g')
+            : null;
           // Time block pattern: HH:MM - HH:MM at start of task text
           const timeblockPattern = /^([\t]*- \[.\]\s*)(\d{2}:\d{2}\s*-\s*\d{2}:\d{2})/;
           // Schedule tags (>[[DATE]], <[[DATE]]) are now visible text — no hiding needed
@@ -4015,6 +4222,19 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const parentId = TaskUtils.extractParentId(lineText);
                 const isParentTask = parentTaskPattern.test(lineText);
 
+                // Detect priority markers (!, !!, !!!) at start of task text
+                const priorityMatch = lineText.match(/^[\t]*- \[.\]\s*(?:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s+)?(!!!|!!|!)\s/);
+                if (priorityMatch) {
+                  const level = priorityMatch[1].length; // 1, 2, or 3
+                  decorations.push({
+                    from: line.from,
+                    to: line.from,
+                    value: Decoration.line({
+                      attributes: { 'data-priority': String(level) }
+                    })
+                  });
+                }
+
                 // Add clickable pill styling to time blocks
                 const timeblockMatch = lineText.match(timeblockPattern);
                 if (timeblockMatch) {
@@ -4031,16 +4251,37 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 }
 
                 // Hide metadata fields if enabled (only in Live Preview, not Source Mode)
-                if (plugin.settings.hideMetadataFields && !isSourceMode) {
+                // Uses Decoration.mark instead of Decoration.replace to avoid
+                // cursor corruption that inserts spaces into field values (#30)
+                if (plugin.settings.hideMetadataFields && !isSourceMode && metadataPattern) {
                   let match;
+                  let hasMetadata = false;
                   metadataPattern.lastIndex = 0;
                   while ((match = metadataPattern.exec(lineText)) !== null) {
                     const start = line.from + match.index;
                     const end = start + match[0].length;
+                    if (line.number === cursorLine) {
+                      // On cursor line: style subtly instead of hiding
+                      hasMetadata = true;
+                      decorations.push({
+                        from: start,
+                        to: end,
+                        value: Decoration.mark({ class: 'task-metadata-muted' })
+                      });
+                    } else {
+                      decorations.push({
+                        from: start,
+                        to: end,
+                        value: Decoration.mark({ class: 'task-metadata-hidden' })
+                      });
+                    }
+                  }
+                  // Add line class so CSS can target Dataview's sibling spans too
+                  if (hasMetadata) {
                     decorations.push({
-                      from: start,
-                      to: end,
-                      value: Decoration.replace({})
+                      from: line.from,
+                      to: line.from,
+                      value: Decoration.line({ attributes: { class: 'has-muted-metadata' } })
                     });
                   }
                 }
@@ -4061,7 +4302,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const eventTimeRange = isCalendarEvent ? EventNoteManager.extractTimeRange(lineText) : null;
 
                 // Show notes button for parent tasks OR calendar events (with their respective settings)
-                const showTaskNotesButton = plugin.settings.enableTaskNotes && !plugin.settings.autoCreateTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
+                const showTaskNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
                 const showEventNotesButton = plugin.settings.enableEventNotes && isCalendarEvent && uid && taskText && taskText.trim() !== '';
                 const showNotesButton = showTaskNotesButton || showEventNotesButton;
 
@@ -4534,6 +4775,77 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     });
 
+    this.addCommand({
+      id: 'create-task-note',
+      name: 'Create task note and link',
+      editorCheckCallback: (checking, editor, view) => {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile || !TaskUtils.shouldProcessFile(activeFile, this.settings)) return false;
+        if (!this.settings.enableTaskNotes) return false;
+
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+
+        if (!TaskUtils.isTask(line)) return false;
+        if (TaskUtils.isCalendarEvent(line)) return false;
+        if (!TaskUtils.isParentTask(line)) return false;
+        if (TaskUtils.hasWikiLink(line)) return false;
+
+        const textAfterCheckbox = line.replace(/^[\t]*- \[.\]\s*/, '').trim();
+        if (!textAfterCheckbox) return false;
+
+        if (checking) return true;
+
+        // Ensure task has an ID
+        let currentLine = line;
+        if (this.settings.enableTaskIds && !TaskUtils.extractId(currentLine)) {
+          currentLine = TaskUtils.addId(currentLine, TaskUtils.generateId(this.settings));
+          this.isProcessing = true;
+          editor.setLine(cursor.line, currentLine);
+          setTimeout(() => { this.isProcessing = false; }, 50);
+        }
+
+        const taskText = TaskNoteManager.extractTaskTextFromLine(currentLine);
+        if (!taskText || !taskText.trim()) {
+          new obsidian.Notice('Could not extract task text');
+          return;
+        }
+
+        const taskId = TaskUtils.extractId(currentLine);
+        const sourceFilePath = activeFile.path;
+
+        (async () => {
+          try {
+            const file = await TaskNoteManager.ensureTaskNoteExists(
+              this.app, this.settings, taskText, sourceFilePath, taskId, currentLine
+            );
+            if (!file) {
+              new obsidian.Notice('Failed to create task note');
+              return;
+            }
+
+            const lineNow = editor.getLine(cursor.line);
+            if (!lineNow || TaskUtils.hasWikiLink(lineNow)) {
+              new obsidian.Notice('Task note created');
+              return;
+            }
+
+            const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow);
+            if (wrapped && wrapped !== lineNow) {
+              this.isProcessing = true;
+              editor.setLine(cursor.line, wrapped);
+              setTimeout(() => { this.isProcessing = false; }, 50);
+            }
+
+            new obsidian.Notice('Task note created and linked');
+          } catch (err) {
+            console.error('Task Manager: create task note failed', err);
+            new obsidian.Notice('Error creating task note');
+          }
+        })();
+      }
+    });
+
     // Bulk scheduling commands for overdue tasks
     this.addCommand({
       id: 'schedule-overdue-to-today',
@@ -4583,6 +4895,24 @@ class TaskManagerPlugin extends obsidian.Plugin {
           new obsidian.Notice('Tasks archived');
         } else {
           new obsidian.Notice('No tasks to archive');
+        }
+      }
+    });
+
+    // Hide configured metadata fields in Reading View
+    this.registerMarkdownPostProcessor((element, context) => {
+      if (!this.settings.hideMetadataFields) return;
+      const fieldNames = this.settings.hiddenMetadataFieldNames
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+      for (const name of fieldNames) {
+        const els = element.querySelectorAll(
+          `.dataview.inline-field[data-dv-key="${name}"], ` +
+          `.dataview.inline-field-standalone[data-dv-key="${name}"]`
+        );
+        for (const el of els) {
+          el.style.display = 'none';
         }
       }
     });
@@ -4811,47 +5141,21 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     }
 
+    // Sync priority field with marker (!, !!, !!!)
+    const markerLevel = TaskUtils.detectPriorityMarker(newLine);
+    const existingPriority = TaskUtils.extractPriority(newLine);
+    if (markerLevel && existingPriority !== markerLevel) {
+      newLine = TaskUtils.addPriority(newLine, markerLevel);
+      modified = true;
+    } else if (!markerLevel && existingPriority !== null) {
+      newLine = TaskUtils.removePriority(newLine);
+      modified = true;
+    }
 
     if (modified) {
       this.isProcessing = true;
       editor.setLine(lineNum, newLine);
       setTimeout(() => { this.isProcessing = false; }, 50);
-    }
-
-    // Auto-create task note and wrap text with link (async, runs after line update)
-    if (this.settings.autoCreateTaskNotes && this.settings.enableTaskNotes && TaskUtils.isParentTask(newLine || line)) {
-      // Re-read the line after any modifications above
-      const currentLine = editor.getLine(lineNum);
-      if (!currentLine || TaskUtils.hasWikiLink(currentLine)) return;
-
-      const taskText = TaskNoteManager.extractTaskTextFromLine(currentLine);
-      if (!taskText || !taskText.trim()) return;
-
-      const taskId = TaskUtils.extractId(currentLine);
-      const sourceFilePath = activeFile.path;
-
-      // Run async note creation and link wrapping
-      (async () => {
-        try {
-          const file = await TaskNoteManager.ensureTaskNoteExists(
-            this.app, this.settings, taskText, sourceFilePath, taskId, currentLine
-          );
-          if (!file) return;
-
-          // Wrap task text with wiki link
-          const lineNow = editor.getLine(lineNum);
-          if (!lineNow || TaskUtils.hasWikiLink(lineNow)) return;
-
-          const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow);
-          if (wrapped && wrapped !== lineNow) {
-            this.isProcessing = true;
-            editor.setLine(lineNum, wrapped);
-            setTimeout(() => { this.isProcessing = false; }, 50);
-          }
-        } catch (err) {
-          console.error('Task Manager: auto-create task note failed', err);
-        }
-      })();
     }
   }
 
