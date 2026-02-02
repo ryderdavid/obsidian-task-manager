@@ -4251,6 +4251,8 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 }
 
                 // Hide metadata fields if enabled (only in Live Preview, not Source Mode)
+                // Uses Decoration.mark instead of Decoration.replace to avoid
+                // cursor corruption that inserts spaces into field values (#30)
                 if (plugin.settings.hideMetadataFields && !isSourceMode && metadataPattern) {
                   let match;
                   let hasMetadata = false;
@@ -4260,7 +4262,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
                     const end = start + match[0].length;
                     if (line.number === cursorLine) {
                       // On cursor line: style subtly instead of hiding
-                      // (Decoration.replace corrupts cursor position during typing)
                       hasMetadata = true;
                       decorations.push({
                         from: start,
@@ -4271,7 +4272,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
                       decorations.push({
                         from: start,
                         to: end,
-                        value: Decoration.replace({})
+                        value: Decoration.mark({ class: 'task-metadata-hidden' })
                       });
                     }
                   }

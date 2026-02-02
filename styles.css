@@ -527,7 +527,22 @@ li[data-task=">"] > p > input {
    Subtle styling so they don't clutter the view
    ============================================ */
 
-/* Raw bracket text wrapped by Decoration.mark */
+/* Non-cursor lines: visually hide metadata fields using Decoration.mark
+   instead of Decoration.replace to prevent cursor corruption (#30) */
+.task-metadata-hidden {
+  display: inline-block !important;
+  width: 0 !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  visibility: hidden !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+}
+
+/* Cursor line: style subtly instead of hiding */
 .task-metadata-muted {
   font-size: 0.75em !important;
   opacity: 0.5 !important;
