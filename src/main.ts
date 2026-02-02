@@ -47,6 +47,9 @@ const DEFAULT_SETTINGS = {
   // Auto-Archive
   enableAutoArchive: true,
 
+  // Scheduling
+  overdueTasksTargetHeader: '',   // Header to insert overdue tasks under (e.g. '## Tasks'). Empty = append to end.
+
   // Shortcut Triggers
   enableScheduleTrigger: true,    // > opens schedule suggestions
   enableTimeblockTrigger: true,   // ^ opens timeblock suggestions
@@ -1876,8 +1879,7 @@ const TaskScheduler = {
     // Remove any existing scheduling tags and calendar icons
     taskCopy = this.removeSchedulingTags(taskCopy);
     // Keep the task ID (same task, different date)
-    // Remove parent tags (will be re-linked if needed)
-    taskCopy = taskCopy.replace(/\s*\[parent::\s*[^\]]+\]/g, '');
+    // Keep parent tags to preserve parent-child relationships
     // Add schedule-from tag with wikilink date
     taskCopy = taskCopy.trimEnd() + ` <[[${fromDate}]]`;
     return taskCopy;
@@ -2338,7 +2340,8 @@ const BulkScheduler = {
             fileDate: basename,
             line,
             lineNum: i,
-            taskId: TaskUtils.extractId(line)
+            taskId: TaskUtils.extractId(line),
+            parentId: TaskUtils.extractParentId(line)
           });
         }
       }
@@ -2390,6 +2393,9 @@ const BulkScheduler = {
     // Read target file content
     let targetContent = await app.vault.read(targetFile);
 
+    // Collect new task copies for batch insertion (enables parent-child ordering)
+    const newTaskCopies = [];
+
     // Process each source file
     for (const [filePath, tasks] of tasksByFile) {
       const sourceFile = app.vault.getAbstractFileByPath(filePath);
@@ -2435,9 +2441,14 @@ const BulkScheduler = {
           }
           targetContent = targetLines.join('\n');
         } else {
-          // Append new copy to target
+          // Collect new copy for batch insertion (ordered by parent-child)
           const taskCopy = TaskScheduler.createScheduledTaskCopy(line, fromDate);
-          targetContent = targetContent.trimEnd() + '\n' + taskCopy;
+          newTaskCopies.push({
+            text: taskCopy,
+            taskId: task.taskId,
+            parentId: TaskUtils.extractParentId(line),
+            isSubtask: TaskUtils.isSubtask(line)
+          });
         }
 
         // Mark original as scheduled
@@ -2462,11 +2473,116 @@ const BulkScheduler = {
       await app.vault.modify(sourceFile, sourceContent);
     }
 
+    // Build ordered task block (parents before children) and insert under header
+    const taskBlock = this.buildOrderedTaskBlock(newTaskCopies);
+    if (taskBlock.length > 0) {
+      targetContent = this.insertUnderHeader(targetContent, taskBlock, settings.overdueTasksTargetHeader);
+    }
+
     // Write updated target file
     await app.vault.modify(targetFile, targetContent);
 
     new obsidian.Notice(`Scheduled ${scheduledCount} overdue task(s) to ${targetDateStr}`);
     return scheduledCount;
+  },
+
+  // Build an ordered block of task lines, ensuring parents come before children
+  buildOrderedTaskBlock(taskCopies) {
+    const parents = [];
+    const children = [];
+
+    for (const task of taskCopies) {
+      if (task.parentId) {
+        children.push(task);
+      } else {
+        parents.push(task);
+      }
+    }
+
+    const result = [];
+    const usedChildren = new Set();
+
+    // Emit each parent followed by its children
+    for (const parent of parents) {
+      result.push(parent.text);
+      if (parent.taskId) {
+        for (const child of children) {
+          if (child.parentId === parent.taskId) {
+            // Ensure child is tab-indented
+            const childText = child.text.startsWith('\t')
+              ? child.text
+              : '\t' + child.text;
+            result.push(childText);
+            usedChildren.add(child);
+          }
+        }
+      }
+    }
+
+    // Append orphan children (parent not in this batch)
+    for (const child of children) {
+      if (!usedChildren.has(child)) {
+        const childText = child.text.startsWith('\t')
+          ? child.text
+          : '\t' + child.text;
+        result.push(childText);
+      }
+    }
+
+    return result;
+  },
+
+  // Insert task lines under a specific header in the content
+  insertUnderHeader(content, taskLines, headerSetting) {
+    // If no header configured, append to end (backward compat)
+    if (!headerSetting) {
+      return content.trimEnd() + '\n' + taskLines.join('\n');
+    }
+
+    const lines = content.split('\n');
+    const headerLevel = (headerSetting.match(/^#+/) || [''])[0].length;
+    const escapedHeader = headerSetting.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const headerPattern = new RegExp('^' + escapedHeader + '\\s*$');
+
+    // Find the header line
+    let headerIndex = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (headerPattern.test(lines[i])) {
+        headerIndex = i;
+        break;
+      }
+    }
+
+    if (headerIndex === -1) {
+      // Header not found - fall back to append
+      console.warn(`Task Manager: header "${headerSetting}" not found in target note, appending to end`);
+      return content.trimEnd() + '\n' + taskLines.join('\n');
+    }
+
+    // Find insertion point: after existing content under this header,
+    // before the next header of same or higher level (or end of file)
+    let insertIndex = headerIndex + 1;
+    if (headerLevel > 0) {
+      const nextHeaderPattern = new RegExp('^#{1,' + headerLevel + '}\\s');
+      for (let i = headerIndex + 1; i < lines.length; i++) {
+        if (nextHeaderPattern.test(lines[i])) {
+          break;
+        }
+        insertIndex = i + 1;
+      }
+    } else {
+      insertIndex = lines.length;
+    }
+
+    // Back up past trailing blank lines to insert right after last content line
+    while (insertIndex > headerIndex + 1 && lines[insertIndex - 1].trim() === '') {
+      insertIndex--;
+    }
+
+    // Insert task lines
+    lines.splice(insertIndex, 0, ...taskLines);
+
+    return lines.join('\n');
   }
 };
 
@@ -4091,6 +4207,20 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
         .setValue(this.plugin.settings.enableSlashCommandTrigger)
         .onChange(async (value) => {
           this.plugin.settings.enableSlashCommandTrigger = value;
+          await this.plugin.saveSettings();
+        }));
+
+    // SCHEDULING SECTION
+    containerEl.createEl('h3', { text: 'Scheduling' });
+
+    new obsidian.Setting(containerEl)
+      .setName('Overdue tasks target header')
+      .setDesc('Header under which overdue tasks are inserted (e.g. "## Tasks"). Leave empty to append to end of file.')
+      .addText(text => text
+        .setPlaceholder('## Tasks')
+        .setValue(this.plugin.settings.overdueTasksTargetHeader)
+        .onChange(async (value) => {
+          this.plugin.settings.overdueTasksTargetHeader = value.trim();
           await this.plugin.saveSettings();
         }));
 
