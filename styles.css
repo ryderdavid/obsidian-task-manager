@@ -460,7 +460,8 @@ li[data-task=">"] > p > input {
 }
 
 .timeblock-picker-row:hover .timeblock-picker-hour,
-.timeblock-picker-row.is-expanded .timeblock-picker-hour {
+.timeblock-picker-row.is-expanded .timeblock-picker-hour,
+.timeblock-picker-row.is-keyboard-focused .timeblock-picker-hour {
   background: var(--background-secondary);
 }
 
@@ -477,7 +478,8 @@ li[data-task=">"] > p > input {
 }
 
 .timeblock-picker-row:hover .timeblock-picker-row-minutes,
-.timeblock-picker-row.is-expanded .timeblock-picker-row-minutes {
+.timeblock-picker-row.is-expanded .timeblock-picker-row-minutes,
+.timeblock-picker-row.is-keyboard-focused .timeblock-picker-row-minutes {
   display: flex;
 }
 
@@ -494,7 +496,8 @@ li[data-task=">"] > p > input {
   transition: all 0.1s ease;
 }
 
-.timeblock-picker-minute-btn:hover {
+.timeblock-picker-minute-btn:hover,
+.timeblock-picker-minute-btn.is-keyboard-focused {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
