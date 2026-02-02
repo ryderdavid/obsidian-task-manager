@@ -31,6 +31,7 @@ const DEFAULT_SETTINGS = {
   // UI
   showInfoButton: true,
   hideMetadataFields: true,
+  hiddenMetadataFieldNames: 'id, parent, uid, calendar, priority',
 
   // Task Notes
   enableTaskNotes: true,
@@ -119,6 +120,29 @@ const TaskUtils = {
 
   removeParentId(line) {
     return line.replace(/\s*\[parent::[^\]]+\]/, '');
+  },
+
+  extractPriority(line) {
+    const match = line.match(/\[priority::\s*(\d+)\]/);
+    return match ? parseInt(match[1]) : null;
+  },
+
+  detectPriorityMarker(line) {
+    const match = line.match(/^[\t]*- \[.\]\s*(?:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s+)?(!!!|!!|!)\s/);
+    return match ? match[1].length : null;
+  },
+
+  addPriority(line, level) {
+    const existing = this.extractPriority(line);
+    if (existing === level) return line;
+    if (existing !== null) {
+      return line.replace(/\[priority::\s*\d+\]/, `[priority::${level}]`);
+    }
+    return line.trimEnd() + ` [priority::${level}]`;
+  },
+
+  removePriority(line) {
+    return line.replace(/\s*\[priority::\s*\d+\]/, '');
   },
 
   isTask(line) {
@@ -4018,11 +4042,22 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
 
     new obsidian.Setting(containerEl)
       .setName('Hide metadata fields')
-      .setDesc('Hide [id::...] and [parent::...] fields in the editor')
+      .setDesc('Hide inline Dataview fields in the editor (e.g. [id::...], [parent::...])')
       .addToggle(toggle => toggle
         .setValue(this.plugin.settings.hideMetadataFields)
         .onChange(async (value) => {
           this.plugin.settings.hideMetadataFields = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new obsidian.Setting(containerEl)
+      .setName('Hidden field names')
+      .setDesc('Comma-separated list of Dataview field names to hide (e.g. id, parent, uid, calendar)')
+      .addText(text => text
+        .setPlaceholder('id, parent, uid, calendar')
+        .setValue(this.plugin.settings.hiddenMetadataFieldNames)
+        .onChange(async (value) => {
+          this.plugin.settings.hiddenMetadataFieldNames = value;
           await this.plugin.saveSettings();
         }));
 
@@ -4145,7 +4180,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
         }
 
         update(update) {
-          if (update.docChanged || update.viewportChanged) {
+          if (update.docChanged || update.viewportChanged || update.selectionSet) {
             this.decorations = this.buildDecorations(update.view, plugin);
           }
         }
@@ -4153,9 +4188,21 @@ class TaskManagerPlugin extends obsidian.Plugin {
         buildDecorations(view, plugin) {
           const decorations = [];
           const isSourceMode = !view.dom.closest('.is-live-preview');
+          // Get cursor line to skip Decoration.replace on it (prevents backwards typing bug)
+          const cursorHead = view.state.selection.main.head;
+          const cursorLine = cursorHead != null
+            ? view.state.doc.lineAt(cursorHead).number
+            : -1;
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
-          const metadataPattern = /\s*\[(?:id|parent|uid|calendar)::\s*[^\]]+\]/g;
+          // Build metadata pattern from configured field names
+          const fieldNames = plugin.settings.hiddenMetadataFieldNames
+            .split(',')
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+          const metadataPattern = fieldNames.length > 0
+            ? new RegExp(`\\s*\\[(?:${fieldNames.join('|')})::\\s*[^\\]]+\\]`, 'g')
+            : null;
           // Time block pattern: HH:MM - HH:MM at start of task text
           const timeblockPattern = /^([\t]*- \[.\]\s*)(\d{2}:\d{2}\s*-\s*\d{2}:\d{2})/;
           // Schedule tags (>[[DATE]], <[[DATE]]) are now visible text — no hiding needed
@@ -4204,16 +4251,36 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 }
 
                 // Hide metadata fields if enabled (only in Live Preview, not Source Mode)
-                if (plugin.settings.hideMetadataFields && !isSourceMode) {
+                if (plugin.settings.hideMetadataFields && !isSourceMode && metadataPattern) {
                   let match;
+                  let hasMetadata = false;
                   metadataPattern.lastIndex = 0;
                   while ((match = metadataPattern.exec(lineText)) !== null) {
                     const start = line.from + match.index;
                     const end = start + match[0].length;
+                    if (line.number === cursorLine) {
+                      // On cursor line: style subtly instead of hiding
+                      // (Decoration.replace corrupts cursor position during typing)
+                      hasMetadata = true;
+                      decorations.push({
+                        from: start,
+                        to: end,
+                        value: Decoration.mark({ class: 'task-metadata-muted' })
+                      });
+                    } else {
+                      decorations.push({
+                        from: start,
+                        to: end,
+                        value: Decoration.replace({})
+                      });
+                    }
+                  }
+                  // Add line class so CSS can target Dataview's sibling spans too
+                  if (hasMetadata) {
                     decorations.push({
-                      from: start,
-                      to: end,
-                      value: Decoration.replace({})
+                      from: line.from,
+                      to: line.from,
+                      value: Decoration.line({ attributes: { class: 'has-muted-metadata' } })
                     });
                   }
                 }
@@ -4831,6 +4898,24 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     });
 
+    // Hide configured metadata fields in Reading View
+    this.registerMarkdownPostProcessor((element, context) => {
+      if (!this.settings.hideMetadataFields) return;
+      const fieldNames = this.settings.hiddenMetadataFieldNames
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+      for (const name of fieldNames) {
+        const els = element.querySelectorAll(
+          `.dataview.inline-field[data-dv-key="${name}"], ` +
+          `.dataview.inline-field-standalone[data-dv-key="${name}"]`
+        );
+        for (const el of els) {
+          el.style.display = 'none';
+        }
+      }
+    });
+
     // Add settings tab
     this.addSettingTab(new TaskManagerSettingTab(this.app, this));
 
@@ -5055,6 +5140,16 @@ class TaskManagerPlugin extends obsidian.Plugin {
       }
     }
 
+    // Sync priority field with marker (!, !!, !!!)
+    const markerLevel = TaskUtils.detectPriorityMarker(newLine);
+    const existingPriority = TaskUtils.extractPriority(newLine);
+    if (markerLevel && existingPriority !== markerLevel) {
+      newLine = TaskUtils.addPriority(newLine, markerLevel);
+      modified = true;
+    } else if (!markerLevel && existingPriority !== null) {
+      newLine = TaskUtils.removePriority(newLine);
+      modified = true;
+    }
 
     if (modified) {
       this.isProcessing = true;
