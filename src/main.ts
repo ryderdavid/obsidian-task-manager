@@ -187,8 +187,13 @@ const TaskUtils = {
    * Check if the task description text is already wrapped in a wiki link.
    */
   hasWikiLink(line) {
-    // Check if line contains [[...]] in the task text portion
-    return /^[\t]*- \[.\].*\[\[/.test(line);
+    // Check if the task description is wrapped in a [[wiki link]].
+    // Strip schedule tags (<[[DATE]], >[[DATE]]) and chain links (🔗[[...]]) first
+    // so they don't produce false positives.
+    const stripped = line
+      .replace(/[<>]\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
+      .replace(/🔗\[\[[^\]]*\]\]/g, '');
+    return /^[\t]*- \[.\].*\[\[/.test(stripped);
   },
 
   /**
@@ -198,7 +203,7 @@ const TaskUtils = {
    *
    * Returns null if already linked or no description text found.
    */
-  wrapTaskTextWithLink(line) {
+  wrapTaskTextWithLink(line, noteFolder = null) {
     if (!this.isTask(line)) return null;
     if (this.hasWikiLink(line)) return null;
 
@@ -211,7 +216,8 @@ const TaskUtils = {
       const [, prefix, description, suffix] = match;
       const trimmedDesc = description.trim();
       if (!trimmedDesc) return null;
-      return `${prefix}[[${trimmedDesc}]]${suffix}`;
+      const link = this._buildWikiLink(trimmedDesc, noteFolder);
+      return `${prefix}${link}${suffix}`;
     }
 
     // No tags or metadata — try simpler match
@@ -220,10 +226,19 @@ const TaskUtils = {
       const [, prefix, description] = simpleMatch;
       const trimmedDesc = description.trim();
       if (!trimmedDesc) return null;
-      return `${prefix}[[${trimmedDesc}]]`;
+      const link = this._buildWikiLink(trimmedDesc, noteFolder);
+      return `${prefix}${link}`;
     }
 
     return null;
+  },
+
+  _buildWikiLink(description, noteFolder) {
+    if (noteFolder) {
+      const sanitized = TaskNoteManager.sanitizeFilename(description);
+      return `[[${noteFolder}/${sanitized}|${description}]]`;
+    }
+    return `[[${description}]]`;
   }
 };
 
@@ -4985,7 +5000,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
               return;
             }
 
-            const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow);
+            const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow, this.settings.taskNotesFolder);
             if (wrapped && wrapped !== lineNow) {
               this.isProcessing = true;
               editor.setLine(cursor.line, wrapped);
