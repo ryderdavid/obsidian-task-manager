@@ -4004,6 +4004,19 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const parentId = TaskUtils.extractParentId(lineText);
                 const isParentTask = parentTaskPattern.test(lineText);
 
+                // Detect priority markers (!, !!, !!!) at start of task text
+                const priorityMatch = lineText.match(/^[\t]*- \[.\]\s*(?:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s+)?(!!!|!!|!)\s/);
+                if (priorityMatch) {
+                  const level = priorityMatch[1].length; // 1, 2, or 3
+                  decorations.push({
+                    from: line.from,
+                    to: line.from,
+                    value: Decoration.line({
+                      attributes: { 'data-priority': String(level) }
+                    })
+                  });
+                }
+
                 // Add clickable pill styling to time blocks
                 const timeblockMatch = lineText.match(timeblockPattern);
                 if (timeblockMatch) {
