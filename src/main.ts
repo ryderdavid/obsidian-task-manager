@@ -187,8 +187,13 @@ const TaskUtils = {
    * Check if the task description text is already wrapped in a wiki link.
    */
   hasWikiLink(line) {
-    // Check if line contains [[...]] in the task text portion
-    return /^[\t]*- \[.\].*\[\[/.test(line);
+    // Check if the task description is wrapped in a [[wiki link]].
+    // Strip schedule tags (<[[DATE]], >[[DATE]]) and chain links (🔗[[...]]) first
+    // so they don't produce false positives.
+    const stripped = line
+      .replace(/[<>]\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
+      .replace(/🔗\[\[[^\]]*\]\]/g, '');
+    return /^[\t]*- \[.\].*\[\[/.test(stripped);
   },
 
   /**
