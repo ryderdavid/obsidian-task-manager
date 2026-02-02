@@ -110,7 +110,7 @@ li[data-task=">"] > p > input {
 /* Gutter "more" button - shown on task line hover */
 .task-gutter-more {
   position: absolute;
-  right: calc(100% + 4px);
+  right: calc(100% + 22px);
   top: 50%;
   transform: translateY(-50%);
   white-space: nowrap;
