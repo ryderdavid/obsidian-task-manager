@@ -120,46 +120,22 @@ class TaskManagerPlugin extends Plugin {
                 }
 
                 // Hide metadata fields if enabled (only in Live Preview, not Source Mode)
-                // Uses Decoration.mark instead of Decoration.replace to avoid
-                // cursor corruption that inserts spaces into field values (#30)
+                // Uses line-level classes only — no Decoration.mark on text ranges.
+                // Decoration.mark (even with CSS-only hiding) corrupts field values
+                // by interfering with CodeMirror's contenteditable position tracking
+                // and conflicting with Dataview's own Decoration.replace on the same
+                // ranges. Dataview handles rendering [key::value] fields in Live
+                // Preview; we just need line classes to control their visibility. (#36)
                 if (plugin.settings.hideMetadataFields && !isSourceMode && metadataPattern) {
-                  let match;
-                  let hasMutedMetadata = false;
-                  let hasHiddenMetadata = false;
                   metadataPattern.lastIndex = 0;
-                  while ((match = metadataPattern.exec(lineText)) !== null) {
-                    const start = line.from + match.index;
-                    const end = start + match[0].length;
-                    if (line.number === cursorLine) {
-                      // On cursor line: style subtly instead of hiding
-                      hasMutedMetadata = true;
-                      decorations.push({
-                        from: start,
-                        to: end,
-                        value: Decoration.mark({ class: 'task-metadata-muted' })
-                      });
-                    } else {
-                      hasHiddenMetadata = true;
-                      decorations.push({
-                        from: start,
-                        to: end,
-                        value: Decoration.mark({ class: 'task-metadata-hidden' })
-                      });
-                    }
-                  }
-                  // Add line class so CSS can target Dataview's sibling spans too
-                  if (hasMutedMetadata) {
+                  if (metadataPattern.test(lineText)) {
+                    const lineClass = line.number === cursorLine
+                      ? 'has-muted-metadata'
+                      : 'has-hidden-metadata';
                     decorations.push({
                       from: line.from,
                       to: line.from,
-                      value: Decoration.line({ attributes: { class: 'has-muted-metadata' } })
-                    });
-                  }
-                  if (hasHiddenMetadata) {
-                    decorations.push({
-                      from: line.from,
-                      to: line.from,
-                      value: Decoration.line({ attributes: { class: 'has-hidden-metadata' } })
+                      value: Decoration.line({ attributes: { class: lineClass } })
                     });
                   }
                 }
