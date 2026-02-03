@@ -197,6 +197,67 @@ class TaskManagerPlugin extends Plugin {
 
     this.registerEditorExtension([infoButtonPlugin]);
 
+    // Atomic ranges for metadata fields — prevents Dataview Decoration.replace
+    // boundary corruption during type-then-delete sequences (#36).
+    // When the cursor tries to enter these ranges, it gets pushed to the
+    // nearest boundary instead, preventing contenteditable from injecting
+    // spurious spaces into field values.
+    const atomicMark = Decoration.mark({});
+    const atomicMetadataPlugin = ViewPlugin.fromClass(
+      class {
+        ranges: DecorationSet;
+        constructor(view: EditorView) {
+          this.ranges = this.buildRanges(view);
+        }
+        update(update: ViewUpdate) {
+          if (update.docChanged || update.viewportChanged) {
+            this.ranges = this.buildRanges(update.view);
+          }
+        }
+        buildRanges(view: EditorView): DecorationSet {
+          const isSourceMode = !view.dom.closest('.is-live-preview');
+          if (isSourceMode || !plugin.settings.hideMetadataFields) {
+            return Decoration.none;
+          }
+          const fieldNames = plugin.settings.hiddenMetadataFieldNames
+            .split(',')
+            .map((s: string) => s.trim())
+            .filter((s: string) => s.length > 0);
+          if (fieldNames.length === 0) return Decoration.none;
+
+          const pattern = new RegExp(`\\[(?:${fieldNames.join('|')})::[^\\]]+\\]`, 'g');
+          const builder = new RangeSetBuilder<Decoration>();
+
+          for (const { from, to } of view.visibleRanges) {
+            for (let pos = from; pos < to;) {
+              const line = view.state.doc.lineAt(pos);
+              if (TaskUtils.TASK_PATTERN.test(line.text)) {
+                pattern.lastIndex = 0;
+                let match;
+                while ((match = pattern.exec(line.text)) !== null) {
+                  builder.add(
+                    line.from + match.index,
+                    line.from + match.index + match[0].length,
+                    atomicMark
+                  );
+                }
+              }
+              pos = line.to + 1;
+            }
+          }
+
+          return builder.finish();
+        }
+      },
+      {
+        provide: (pluginField) => EditorView.atomicRanges.of((view) => {
+          return view.plugin(pluginField)?.ranges ?? Decoration.none;
+        })
+      }
+    );
+
+    this.registerEditorExtension([atomicMetadataPlugin]);
+
     // Register slash command suggest
     this.registerEditorSuggest(new SlashCommandSuggest(this.app, this));
 
