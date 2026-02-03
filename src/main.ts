@@ -249,21 +249,6 @@ const IcsEventSync = {
     return match ? match[1].trim() : null;
   },
 
-  // Parse a calendar event line into components
-  parseEventLine(line) {
-    // Match: - [c] HH:MM - HH:MM Event text [uid::xxx]
-    const match = line.match(/^- \[c\]\s*(\d{2}):(\d{2})\s*-\s*(\d{2}):(\d{2})\s+(.+?)(?:\s*\[uid::[^\]]+\])?\s*$/);
-    if (!match) return null;
-    return {
-      startHour: parseInt(match[1]),
-      startMinute: parseInt(match[2]),
-      endHour: parseInt(match[3]),
-      endMinute: parseInt(match[4]),
-      text: match[5].trim(),
-      uid: this.extractUid(line)
-    };
-  },
-
   // Format time as HH:MM
   formatTime(hour, minute) {
     return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
@@ -3776,98 +3761,6 @@ class GutterMoreWidget extends WidgetType {
   }
 }
 
-// Container widget that holds all task decorations (notes button, pills)
-// so they wrap together as a single unit
-class TaskDecorationsWidget extends WidgetType {
-  constructor(options, plugin) {
-    super();
-    this.options = options; // { taskText, taskId, parentId, showInfoButton, lineNum, ... }
-    this.plugin = plugin;
-  }
-
-  toDOM() {
-    const container = document.createElement('span');
-    container.className = 'task-decorations-container';
-
-
-
-    return container;
-  }
-
-  async navigateToDate(date) {
-    const path = TaskScheduler.getDailyNotePath(date, this.plugin.settings);
-    let file = this.plugin.app.vault.getAbstractFileByPath(path);
-    if (!file) {
-      file = await this.plugin.app.vault.create(path, '');
-    }
-    if (file instanceof obsidian.TFile) {
-      await this.plugin.app.workspace.getLeaf().openFile(file);
-    }
-  }
-
-  eq(other) {
-    return (
-      other.options.taskText === this.options.taskText &&
-      other.options.taskId === this.options.taskId &&
-      other.options.parentId === this.options.parentId &&
-      other.options.uid === this.options.uid &&
-      other.options.calendarSource === this.options.calendarSource &&
-      other.options.isCalendarEvent === this.options.isCalendarEvent &&
-      JSON.stringify(other.options.eventTimeRange) === JSON.stringify(this.options.eventTimeRange) &&
-      other.options.showInfoButton === this.options.showInfoButton &&
-      other.options.lineNum === this.options.lineNum
-    );
-  }
-
-  ignoreEvent() {
-    return false;
-  }
-}
-
-// Widget for the task note button (kept for backwards compatibility)
-class TaskNoteButtonWidget extends WidgetType {
-  constructor(taskText, taskId, plugin) {
-    super();
-    this.taskText = taskText;
-    this.taskId = taskId;  // Store taskId for inclusion in new Task Notes
-    this.plugin = plugin;
-  }
-
-  toDOM() {
-    const btn = document.createElement('span');
-    btn.className = 'task-note-button';
-    // Use Font Awesome file-lines icon + text
-    const iconSpan = document.createElement('span');
-    iconSpan.className = 'task-note-button-icon';
-    iconSpan.innerHTML = Icons.fileLines;
-    btn.appendChild(iconSpan);
-    btn.appendChild(document.createTextNode('notes'));
-    btn.setAttribute('aria-label', 'Open task note');
-    btn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const activeFile = this.plugin.app.workspace.getActiveFile();
-      const sourceFilePath = activeFile ? activeFile.path : null;
-      await TaskNoteManager.openOrCreateTaskNote(
-        this.plugin.app,
-        this.plugin.settings,
-        this.taskText,
-        sourceFilePath,
-        this.taskId  // Pass taskId so new Task Notes include it in frontmatter
-      );
-    });
-    return btn;
-  }
-
-  eq(other) {
-    return other.taskText === this.taskText && other.taskId === this.taskId;
-  }
-
-  ignoreEvent() {
-    return false;
-  }
-}
-
 // Modal for displaying task metadata
 class TaskInfoModal extends obsidian.Modal {
   constructor(app, taskId, parentId, taskText, parentText, onUnlink, uid, isCalendarEvent, calendarSource) {
@@ -3955,35 +3848,6 @@ class TaskInfoModal extends obsidian.Modal {
   onClose() {
     const { contentEl } = this;
     contentEl.empty();
-  }
-}
-
-
-// Widget for the info button
-class InfoButtonWidget extends WidgetType {
-  constructor(taskId, parentId, taskText, plugin) {
-    super();
-    this.taskId = taskId;
-    this.parentId = parentId;
-    this.taskText = taskText;
-    this.plugin = plugin;
-  }
-
-  toDOM() {
-    const btn = document.createElement('span');
-    btn.className = 'task-info-button';
-    btn.textContent = '\u24D8'; // ⓘ
-    btn.title = 'Task info';
-    btn.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.plugin.showTaskInfo(this.taskId, this.parentId, this.taskText);
-    });
-    return btn;
-  }
-
-  ignoreEvent() {
-    return false;
   }
 }
 
@@ -4353,11 +4217,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
           const timeblockPattern = /^([\t]*- \[.\]\s*)(\d{2}:\d{2}\s*-\s*\d{2}:\d{2})/;
           // Schedule tags (>[[DATE]], <[[DATE]]) are now visible text — no hiding needed
 
-          // Check if we're in the task notes folder (skip task note buttons there)
-          const activeFile = plugin.app.workspace.getActiveFile();
-          const inTaskNotesFolder = activeFile &&
-            activeFile.path.startsWith(plugin.settings.taskNotesFolder + '/');
-
           for (const { from, to } of view.visibleRanges) {
             for (let pos = from; pos < to;) {
               const line = view.state.doc.lineAt(pos);
@@ -4454,13 +4313,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
                 const taskText = isCalendarEvent
                   ? EventNoteManager.extractEventTitle(lineText)
                   : TaskNoteManager.extractTaskTextFromLine(lineText);
-                const eventTimeRange = isCalendarEvent ? EventNoteManager.extractTimeRange(lineText) : null;
-
-                // Show notes button for parent tasks OR calendar events (with their respective settings)
-                const showTaskNotesButton = plugin.settings.enableTaskNotes && isParentTask && !inTaskNotesFolder && taskText && taskText.trim() !== '';
-                const showEventNotesButton = plugin.settings.enableEventNotes && isCalendarEvent && uid && taskText && taskText.trim() !== '';
-                const showNotesButton = showTaskNotesButton || showEventNotesButton;
-
                 const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
 
                 // Add gutter "more" widget at line start (shown on hover)
@@ -4478,35 +4330,6 @@ class TaskManagerPlugin extends obsidian.Plugin {
                         calendarSource: calendarSource
                       }, plugin),
                       side: -1
-                    })
-                  });
-                }
-
-                // Skip end-of-line widget if nothing to show
-                const isEmptyTask = !taskText || !taskText.trim();
-                if (isEmptyTask && !showNotesButton) {
-                  pos = line.to + 1;
-                  continue;
-                }
-
-                // Add unified container widget for notes button and schedule pills
-                if (showNotesButton) {
-                  decorations.push({
-                    from: line.to,
-                    to: line.to,
-                    value: Decoration.widget({
-                      widget: new TaskDecorationsWidget({
-                        taskText: taskText,
-                        taskId: taskId,
-                        parentId: parentId,
-                        uid: uid,
-                        calendarSource: calendarSource,
-                        isCalendarEvent: isCalendarEvent,
-                        eventTimeRange: eventTimeRange,
-                        showInfoButton: false,
-                        lineNum: line.number
-                      }, plugin),
-                      side: 1
                     })
                   });
                 }
