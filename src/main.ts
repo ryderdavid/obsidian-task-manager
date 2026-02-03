@@ -977,6 +977,13 @@ class TaskManagerPlugin extends Plugin {
       modified = true;
     }
 
+    // Repair metadata corrupted by Dataview's Decoration.replace (#36)
+    const repaired = TaskUtils.repairCorruptedMetadata(newLine);
+    if (repaired !== newLine) {
+      newLine = repaired;
+      modified = true;
+    }
+
     if (modified) {
       this.isProcessing = true;
       editor.setLine(lineNum, newLine);
