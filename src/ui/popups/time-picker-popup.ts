@@ -1,6 +1,8 @@
 import { Notice, MarkdownView } from 'obsidian';
+import type { Editor } from 'obsidian';
 import { addTimeblock, formatDisplayTime, formatTime, getDefaultEndTime } from '../../utils/timeblock-utils';
 import { Icons } from '../../constants';
+import type TaskManagerPlugin from '../../main';
 
 // ============================================================================
 // TIME PICKER POPUP
@@ -12,7 +14,28 @@ export class TimePickerPopup {
   static NIGHT_HOURS = [18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5];
   static MINUTES = [0, 15, 30, 45];
 
-  constructor(plugin, editor, lineNum, mode, existingStart = null, onComplete = null) {
+  plugin: TaskManagerPlugin;
+  editor: Editor;
+  lineNum: number;
+  mode: 'start' | 'end';
+  existingStart: { hour: number; minute: number } | null;
+  onComplete: ((hour: number, minute: number) => void) | null;
+  selectedHour: number | null;
+  expandedHour: number | null;
+  container: HTMLDivElement | null;
+  focusedColumn: number;
+  focusedRowIndex: number;
+  minutePhase: boolean;
+  focusedMinuteIndex: number;
+
+  constructor(
+    plugin: TaskManagerPlugin,
+    editor: Editor,
+    lineNum: number,
+    mode: 'start' | 'end',
+    existingStart: { hour: number; minute: number } | null = null,
+    onComplete: ((hour: number, minute: number) => void) | null = null
+  ) {
     this.plugin = plugin;
     this.editor = editor;
     this.lineNum = lineNum;
@@ -34,12 +57,12 @@ export class TimePickerPopup {
   }
 
   /** Get the hours array for a column index */
-  getColumnHours(col) {
+  getColumnHours(col: number): number[] {
     return col === 0 ? TimePickerPopup.DAY_HOURS : TimePickerPopup.NIGHT_HOURS;
   }
 
   /** Get the hour value for current focused position */
-  getFocusedHour() {
+  getFocusedHour(): number {
     return this.getColumnHours(this.focusedColumn)[this.focusedRowIndex];
   }
 
@@ -59,7 +82,7 @@ export class TimePickerPopup {
   }
 
   /** Set focus to a specific hour value, finding it in the layout */
-  setFocusToHour(hour) {
+  setFocusToHour(hour: number) {
     const dayIdx = TimePickerPopup.DAY_HOURS.indexOf(hour);
     if (dayIdx !== -1) {
       this.focusedColumn = 0;
@@ -115,7 +138,8 @@ export class TimePickerPopup {
   }
 
   render() {
-    this.container.empty();
+    if (!this.container) return;
+    this.container.replaceChildren();
 
     // Header
     const header = document.createElement('div');
@@ -146,7 +170,7 @@ export class TimePickerPopup {
     this.container.appendChild(columns);
   }
 
-  createColumn(title, startHour, endHour) {
+  createColumn(title: string, startHour: number, endHour: number): HTMLDivElement {
     const column = document.createElement('div');
     column.className = 'timeblock-picker-column';
 
@@ -164,7 +188,7 @@ export class TimePickerPopup {
     return column;
   }
 
-  createHourRow(hour) {
+  createHourRow(hour: number): HTMLDivElement {
     const row = document.createElement('div');
     row.className = 'timeblock-picker-row';
     row.dataset.hour = String(hour);
@@ -197,7 +221,7 @@ export class TimePickerPopup {
     hourLabel.textContent = formatDisplayTime(hour);
 
     // Click on hour label: expand on mobile or select :00 on desktop with hover
-    hourLabel.addEventListener('click', (e) => {
+    hourLabel.addEventListener('click', (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
       this.handleHourClick(hour);
@@ -225,7 +249,7 @@ export class TimePickerPopup {
       }
 
       btn.textContent = minute.toString().padStart(2, '0');
-      btn.addEventListener('click', (e) => {
+      btn.addEventListener('click', (e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         this.selectTime(hour, minute);
@@ -238,7 +262,7 @@ export class TimePickerPopup {
     return row;
   }
 
-  handleHourClick(hour) {
+  handleHourClick(hour: number) {
     // If already expanded for this hour, select :00
     if (this.expandedHour === hour) {
       this.selectTime(hour, 0);
@@ -250,7 +274,7 @@ export class TimePickerPopup {
     this.render();
   }
 
-  selectTime(hour, minute) {
+  selectTime(hour: number, minute: number) {
     this.selectedHour = hour;
     this.close();
 
@@ -272,7 +296,7 @@ export class TimePickerPopup {
     }
   }
 
-  applyTimeblock(startHour, startMinute, endHour, endMinute) {
+  applyTimeblock(startHour: number, startMinute: number, endHour: number, endMinute: number) {
     const line = this.editor.getLine(this.lineNum);
     const newLine = addTimeblock(line, startHour, startMinute, endHour, endMinute);
     this.editor.setLine(this.lineNum, newLine);
@@ -283,13 +307,13 @@ export class TimePickerPopup {
     const view = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return;
 
-    const cm = view.editor.cm;
+    const cm = (view.editor as any).cm;
     if (!cm) return;
 
     const cursor = this.editor.getCursor();
     const coords = cm.coordsAtPos(cm.state.doc.line(cursor.line + 1).from);
 
-    if (coords) {
+    if (coords && this.container) {
       this.container.style.position = 'absolute';
       this.container.style.left = `${coords.left}px`;
       this.container.style.top = `${coords.bottom + 5}px`;
@@ -297,7 +321,7 @@ export class TimePickerPopup {
     }
   }
 
-  handleKeyDown(e) {
+  handleKeyDown(e: KeyboardEvent) {
     const maxRow = 11; // 12 hours per column, 0-indexed
 
     switch (e.key) {
@@ -394,8 +418,8 @@ export class TimePickerPopup {
     }
   }
 
-  handleClickOutside(e) {
-    if (this.container && !this.container.contains(e.target)) {
+  handleClickOutside(e: MouseEvent) {
+    if (this.container && !this.container.contains(e.target as Node)) {
       this.close();
     }
   }

@@ -1,12 +1,13 @@
 import { addId, extractId, generateId, isCalendarEvent, isTask } from '../utils/task-utils';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // TASK ID MANAGER MODULE
 // ============================================================================
 
-export function processContent(content, settings) {
+export function processContent(content: string, settings: TaskManagerSettings): string {
   const lines = content.split('\n');
-  const result = [];
+  const result: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];

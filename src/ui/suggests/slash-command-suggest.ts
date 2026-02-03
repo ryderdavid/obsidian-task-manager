@@ -1,4 +1,6 @@
 import { EditorSuggest } from 'obsidian';
+import type { App, Editor, EditorPosition, EditorSuggestContext, EditorSuggestTriggerInfo, TFile } from 'obsidian';
+import type TaskManagerPlugin from '../../main';
 import { isTask } from '../../utils/task-utils';
 import { TimePickerPopup } from '../popups/time-picker-popup';
 import { ScheduleDatePopup } from '../popups/schedule-date-popup';
@@ -8,13 +10,17 @@ import { SLASH_COMMANDS } from '../../constants';
 // SLASH COMMAND SUGGEST
 // ============================================================================
 
-export class SlashCommandSuggest extends EditorSuggest {
-  constructor(app, plugin) {
+type SlashCommandSuggestion = (typeof SLASH_COMMANDS)[number];
+
+export class SlashCommandSuggest extends EditorSuggest<SlashCommandSuggestion> {
+  plugin: TaskManagerPlugin;
+
+  constructor(app: App, plugin: TaskManagerPlugin) {
     super(app);
     this.plugin = plugin;
   }
 
-  onTrigger(cursor, editor, file) {
+  onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
     if (!this.plugin.settings.enableSlashCommandTrigger) return null;
 
     // Only trigger on task lines
@@ -43,7 +49,7 @@ export class SlashCommandSuggest extends EditorSuggest {
     };
   }
 
-  getSuggestions(context) {
+  getSuggestions(context: EditorSuggestContext): SlashCommandSuggestion[] {
     const query = context.query.toLowerCase();
     return SLASH_COMMANDS.filter(cmd =>
       cmd.label.toLowerCase().includes(query) ||
@@ -51,20 +57,22 @@ export class SlashCommandSuggest extends EditorSuggest {
     );
   }
 
-  renderSuggestion(suggestion, el) {
+  renderSuggestion(suggestion: SlashCommandSuggestion, el: HTMLElement) {
     el.addClass('slash-command-item');
     const iconSpan = el.createSpan({ cls: 'slash-command-icon' });
     iconSpan.innerHTML = suggestion.icon;
     el.createSpan({ text: suggestion.label, cls: 'slash-command-label' });
   }
 
-  selectSuggestion(suggestion, evt) {
-    const { editor } = this.context;
-    const lineNum = this.context.start.line;
+  selectSuggestion(suggestion: SlashCommandSuggestion, evt: MouseEvent | KeyboardEvent) {
+    const ctx = this.context;
+    if (!ctx) return;
+    const { editor } = ctx;
+    const lineNum = ctx.start.line;
     const line = editor.getLine(lineNum);
 
     // Remove the "/" and any typed query
-    editor.replaceRange('', this.context.start, this.context.end);
+    editor.replaceRange('', ctx.start, ctx.end);
 
     // Re-read line after removal
     const updatedLine = editor.getLine(lineNum);
@@ -80,12 +88,12 @@ export class SlashCommandSuggest extends EditorSuggest {
     }
   }
 
-  openSchedulePopup(editor, lineNum) {
+  openSchedulePopup(editor: Editor, lineNum: number) {
     const popup = new ScheduleDatePopup(this.plugin, editor, lineNum);
     popup.open();
   }
 
-  openTimeBlockPopup(editor, lineNum) {
+  openTimeBlockPopup(editor: Editor, lineNum: number) {
     const popup = new TimePickerPopup(this.plugin, editor, lineNum, 'start');
     popup.open();
   }

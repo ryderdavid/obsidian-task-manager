@@ -1,7 +1,9 @@
 import { Notice, TFile } from 'obsidian';
+import type { App } from 'obsidian';
 import { extractId, extractParentId, isCalendarEvent, isSubtask } from '../utils/task-utils';
 import { createScheduledTaskCopy, getDailyNotePath, markTaskAsScheduled, removeSchedulingTags } from './task-scheduler';
 import { extractTaskTextFromLine, updateTaskNoteSourceFile } from './task-note-manager';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // BULK SCHEDULER MODULE - Schedule all overdue tasks
@@ -10,21 +12,37 @@ import { extractTaskTextFromLine, updateTaskNoteSourceFile } from './task-note-m
 // Pattern for incomplete tasks (not completed, cancelled, scheduled, or in-progress)
 const INCOMPLETE_TASK_PATTERN = /^[\t]*- \[ \]/;
 
+type OverdueTask = {
+  file: TFile;
+  fileDate: string;
+  line: string;
+  lineNum: number;
+  taskId: string | null;
+  parentId: string | null;
+};
+
+type TaskCopy = {
+  text: string;
+  taskId: string | null;
+  parentId: string | null;
+  isSubtask: boolean;
+};
+
 // Check if a task is incomplete (actionable)
-export function isIncompleteTask(line) {
+export function isIncompleteTask(line: string): boolean {
   return INCOMPLETE_TASK_PATTERN.test(line);
 }
 
 // Parse date from daily note filename (YYYY-MM-DD.md)
-export function parseDateFromFilename(filename) {
+export function parseDateFromFilename(filename: string): Date | null {
   const match = filename.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
   return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
 }
 
 // Get all daily note files from target folders
-export async function getDailyNoteFiles(app, settings) {
-  const files = [];
+export async function getDailyNoteFiles(app: App, settings: TaskManagerSettings): Promise<Array<{ file: TFile; date: Date; basename: string }>> {
+  const files: Array<{ file: TFile; date: Date; basename: string }> = [];
   const targetFolders = settings.targetFolders;
 
   for (const folder of targetFolders) {
@@ -48,9 +66,9 @@ export async function getDailyNoteFiles(app, settings) {
 }
 
 // Find all overdue incomplete tasks across daily notes before targetDate
-export async function findOverdueTasks(app, settings, targetDate) {
+export async function findOverdueTasks(app: App, settings: TaskManagerSettings, targetDate: Date): Promise<OverdueTask[]> {
   const dailyNotes = await getDailyNoteFiles(app, settings);
-  const overdueTasks = [];
+  const overdueTasks: OverdueTask[] = [];
 
   // Filter to notes before target date
   const targetTime = targetDate.getTime();
@@ -83,7 +101,7 @@ export async function findOverdueTasks(app, settings, targetDate) {
 }
 
 // Schedule all overdue tasks to a target date
-export async function scheduleAllOverdueTo(app, settings, targetDate) {
+export async function scheduleAllOverdueTo(app: App, settings: TaskManagerSettings, targetDate: Date): Promise<number> {
   const targetDateStr = targetDate.toISOString().split('T')[0];
   const overdueTasks = await findOverdueTasks(app, settings, targetDate);
 
@@ -95,12 +113,15 @@ export async function scheduleAllOverdueTo(app, settings, targetDate) {
   let scheduledCount = 0;
 
   // Group tasks by source file to batch file modifications
-  const tasksByFile = new Map();
+  const tasksByFile = new Map<string, OverdueTask[]>();
   for (const task of overdueTasks) {
     if (!tasksByFile.has(task.file.path)) {
       tasksByFile.set(task.file.path, []);
     }
-    tasksByFile.get(task.file.path).push(task);
+    const bucket = tasksByFile.get(task.file.path);
+    if (bucket) {
+      bucket.push(task);
+    }
   }
 
   // Get or create the target daily note
@@ -126,7 +147,7 @@ export async function scheduleAllOverdueTo(app, settings, targetDate) {
   let targetContent = await app.vault.read(targetFile);
 
   // Collect new task copies for batch insertion (enables parent-child ordering)
-  const newTaskCopies = [];
+  const newTaskCopies: TaskCopy[] = [];
 
   // Process each source file
   for (const [filePath, tasks] of tasksByFile) {
@@ -219,9 +240,9 @@ export async function scheduleAllOverdueTo(app, settings, targetDate) {
 }
 
 // Build an ordered block of task lines, ensuring parents come before children
-export function buildOrderedTaskBlock(taskCopies) {
-  const parents = [];
-  const children = [];
+export function buildOrderedTaskBlock(taskCopies: TaskCopy[]): string[] {
+  const parents: TaskCopy[] = [];
+  const children: TaskCopy[] = [];
 
   for (const task of taskCopies) {
     if (task.parentId) {
@@ -231,8 +252,8 @@ export function buildOrderedTaskBlock(taskCopies) {
     }
   }
 
-  const result = [];
-  const usedChildren = new Set();
+  const result: string[] = [];
+  const usedChildren = new Set<TaskCopy>();
 
   // Emit each parent followed by its children
   for (const parent of parents) {
@@ -265,7 +286,7 @@ export function buildOrderedTaskBlock(taskCopies) {
 }
 
 // Insert task lines under a specific header in the content
-export function insertUnderHeader(content, taskLines, headerSetting) {
+export function insertUnderHeader(content: string, taskLines: string[], headerSetting: string): string {
   // If no header configured, append to end (backward compat)
   if (!headerSetting) {
     return content.trimEnd() + '\n' + taskLines.join('\n');

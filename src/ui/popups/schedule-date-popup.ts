@@ -1,14 +1,24 @@
 import { Notice, MarkdownView } from 'obsidian';
+import type { Editor, MarkdownFileInfo } from 'obsidian';
 import { scheduleTask } from '../../services/task-scheduler';
 import { parseCustomDate } from '../../utils/schedule-date-utils';
 import { SCHEDULE_DATE_OPTIONS } from '../../constants';
+import type TaskManagerPlugin from '../../main';
 
 // ============================================================================
 // SCHEDULE DATE POPUP
 // ============================================================================
 
 export class ScheduleDatePopup {
-  constructor(plugin, editor, lineNum) {
+  plugin: TaskManagerPlugin;
+  editor: Editor;
+  lineNum: number;
+  selectedIndex: number;
+  isCustomMode: boolean;
+  container: HTMLDivElement | null;
+  customInput: HTMLInputElement | null;
+
+  constructor(plugin: TaskManagerPlugin, editor: Editor, lineNum: number) {
     this.plugin = plugin;
     this.editor = editor;
     this.lineNum = lineNum;
@@ -52,9 +62,12 @@ export class ScheduleDatePopup {
   }
 
   renderOptions() {
-    this.container.empty();
+    const container = this.container;
+    if (!container) return;
+    container.replaceChildren();
 
-    SCHEDULE_DATE_OPTIONS.forEach((option, index) => {
+    type ScheduleOption = (typeof SCHEDULE_DATE_OPTIONS)[number];
+    SCHEDULE_DATE_OPTIONS.forEach((option: ScheduleOption, index: number) => {
       const item = document.createElement('div');
       item.className = 'schedule-date-option';
       if (index === this.selectedIndex) {
@@ -67,7 +80,7 @@ export class ScheduleDatePopup {
         this.customInput.type = 'text';
         this.customInput.className = 'schedule-date-custom-input';
         this.customInput.placeholder = 'YYYY-MM-DD';
-        this.customInput.addEventListener('keydown', (e) => {
+        this.customInput.addEventListener('keydown', (e: KeyboardEvent) => {
           if (e.key === 'Enter') {
             e.preventDefault();
             e.stopPropagation();
@@ -79,7 +92,10 @@ export class ScheduleDatePopup {
           }
         });
         item.appendChild(this.customInput);
-        setTimeout(() => this.customInput.focus(), 0);
+        const input = this.customInput;
+        if (input) {
+          setTimeout(() => input.focus(), 0);
+        }
       } else {
         item.createSpan({ text: option.label, cls: 'schedule-date-label' });
         if (option.getDate) {
@@ -87,14 +103,14 @@ export class ScheduleDatePopup {
         }
       }
 
-      item.addEventListener('click', (e) => {
+      item.addEventListener('click', (e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         this.selectedIndex = index;
         this.selectOption(option);
       });
 
-      this.container.appendChild(item);
+      container.appendChild(item);
     });
   }
 
@@ -103,13 +119,13 @@ export class ScheduleDatePopup {
     const view = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return;
 
-    const cm = view.editor.cm;
+    const cm = (view.editor as any).cm;
     if (!cm) return;
 
     const cursor = this.editor.getCursor();
     const coords = cm.coordsAtPos(cm.state.doc.line(cursor.line + 1).from);
 
-    if (coords) {
+    if (coords && this.container) {
       this.container.style.position = 'absolute';
       this.container.style.left = `${coords.left}px`;
       this.container.style.top = `${coords.bottom + 5}px`;
@@ -117,7 +133,7 @@ export class ScheduleDatePopup {
     }
   }
 
-  handleKeyDown(e) {
+  handleKeyDown(e: KeyboardEvent) {
     if (this.isCustomMode && this.customInput && document.activeElement === this.customInput) {
       // Let input handle its own keys except Escape
       if (e.key === 'Escape') {
@@ -157,13 +173,13 @@ export class ScheduleDatePopup {
     }
   }
 
-  handleClickOutside(e) {
-    if (this.container && !this.container.contains(e.target)) {
+  handleClickOutside(e: MouseEvent) {
+    if (this.container && !this.container.contains(e.target as Node)) {
       this.close();
     }
   }
 
-  selectOption(option) {
+  selectOption(option: (typeof SCHEDULE_DATE_OPTIONS)[number]) {
     if (option.isCustom) {
       if (!this.isCustomMode) {
         this.isCustomMode = true;
@@ -185,7 +201,7 @@ export class ScheduleDatePopup {
     }
   }
 
-  async scheduleToDate(date) {
+  async scheduleToDate(date: string) {
     this.close();
     await scheduleTask(
       this.plugin.app,

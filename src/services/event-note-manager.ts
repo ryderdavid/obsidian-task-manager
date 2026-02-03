@@ -1,4 +1,6 @@
 import { Notice, TFile } from 'obsidian';
+import type { App } from 'obsidian';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // EVENT NOTE MANAGER MODULE
@@ -11,7 +13,7 @@ import { Notice, TFile } from 'obsidian';
 /**
  * Sanitize event title for use as filename
  */
-export function sanitizeFilename(text) {
+export function sanitizeFilename(text: string): string | null {
   if (!text) return null;
   // Remove time range at start (e.g., "10:00 - 15:00")
   let cleaned = text.replace(/^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*/, '');
@@ -29,7 +31,7 @@ export function sanitizeFilename(text) {
  * e.g., "- [c] 10:00 - 15:00 Meeting Name https://... [uid::xxx]"
  * Returns: "Meeting Name"
  */
-export function extractEventTitle(line) {
+export function extractEventTitle(line: string): string {
   // Remove the checkbox prefix
   let text = line.replace(/^[\t]*- \[c\]\s*/, '');
   // Remove time range
@@ -47,13 +49,15 @@ export function extractEventTitle(line) {
  * Extract time range from calendar event line
  * Returns object { start: "HH:MM", end: "HH:MM" } or null
  */
-export function extractTimeRange(line) {
+export function extractTimeRange(line: string): TimeRange | null {
   const match = line.match(/(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})/);
   if (match) {
     return { start: match[1], end: match[2] };
   }
   return null;
 }
+
+type TimeRange = { start: string; end: string };
 
 /**
  * Open or create an event note for a calendar event
@@ -65,7 +69,15 @@ export function extractTimeRange(line) {
  * @param {string} timeRange - Optional time range string
  * @param {string} calendarSource - Optional calendar source name (e.g., "Work", "Fastmail")
  */
-export async function openOrCreateEventNote(app, settings, eventTitle, uid, sourceFilePath, timeRange = null, calendarSource = null) {
+export async function openOrCreateEventNote(
+  app: App,
+  settings: TaskManagerSettings,
+  eventTitle: string,
+  uid: string | null,
+  sourceFilePath: string | null,
+  timeRange: TimeRange | null = null,
+  calendarSource: string | null = null
+): Promise<TFile | null> {
   const sanitizedName = sanitizeFilename(eventTitle);
   if (!sanitizedName) {
     new Notice('Could not extract event name');
@@ -127,5 +139,5 @@ sourceFile: "${sourceFilePath || ''}"
     await app.workspace.getLeaf().openFile(file);
   }
 
-  return file;
+  return file instanceof TFile ? file : null;
 }

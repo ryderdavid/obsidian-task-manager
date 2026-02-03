@@ -6,14 +6,15 @@ import {
   isSubtask,
   removeParentId
 } from '../utils/task-utils';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // PARENT-CHILD LINKER MODULE
 // ============================================================================
 
-export function linkContent(content, settings) {
+export function linkContent(content: string, settings: TaskManagerSettings): string {
   const lines = content.split('\n');
-  const result = [];
+  const result: string[] = [];
 
   let currentParentId = null;
 

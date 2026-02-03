@@ -1,4 +1,6 @@
 import { PluginSettingTab, Setting } from 'obsidian';
+import type { App } from 'obsidian';
+import type TaskManagerPlugin from '../main';
 import { TaskManagerSettings } from '../types';
 
 // ============================================================================
@@ -6,7 +8,9 @@ import { TaskManagerSettings } from '../types';
 // ============================================================================
 
 export class TaskManagerSettingTab extends PluginSettingTab {
-  constructor(app, plugin) {
+  plugin: TaskManagerPlugin;
+
+  constructor(app: App, plugin: TaskManagerPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }

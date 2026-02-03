@@ -1,8 +1,28 @@
 import { Modal } from 'obsidian';
+import type { App } from 'obsidian';
 
 // Modal for displaying task metadata
 export class TaskInfoModal extends Modal {
-  constructor(app, taskId, parentId, taskText, parentText, onUnlink, uid, isCalendarEvent, calendarSource) {
+  taskId: string | null;
+  parentId: string | null;
+  taskText: string | null;
+  parentText: string | null;
+  onUnlink: () => void;
+  uid: string | null;
+  isCalendarEvent: boolean;
+  calendarSource: string | null;
+
+  constructor(
+    app: App,
+    taskId: string | null,
+    parentId: string | null,
+    taskText: string | null,
+    parentText: string | null,
+    onUnlink: () => void,
+    uid: string | null,
+    isCalendarEvent: boolean,
+    calendarSource: string | null
+  ) {
     super(app);
     this.taskId = taskId;
     this.parentId = parentId;

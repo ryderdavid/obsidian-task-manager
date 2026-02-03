@@ -1,4 +1,5 @@
 import { CALENDAR_EVENT_PATTERN, SUBTASK_PATTERN } from '../utils/task-utils';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // TASK ARCHIVER MODULE
@@ -15,12 +16,12 @@ const ARCHIVE_LINE = /^> /;
 /**
  * Archive completed and scheduled tasks to a collapsed callout section
  */
-export function archiveContent(content, settings) {
+export function archiveContent(content: string, settings: TaskManagerSettings): string {
   const lines = content.split('\n');
-  const calendarEvents = [];
-  const activeTasks = [];
-  const archivedTasks = [];
-  const existingArchiveContent = [];
+  const calendarEvents: string[] = [];
+  const activeTasks: string[] = [];
+  const archivedTasks: string[] = [];
+  const existingArchiveContent: string[] = [];
   let inArchiveSection = false;
   let i = 0;
 
@@ -92,7 +93,7 @@ export function archiveContent(content, settings) {
   const allArchived = [...archivedTasks, ...existingArchiveContent];
 
   // Build result
-  const result = [];
+  const result: string[] = [];
 
   // Calendar events first
   for (const event of calendarEvents) {

@@ -1,17 +1,19 @@
 import { Notice, TFile } from 'obsidian';
+import type { App, Editor } from 'obsidian';
 import { extractId, isSubtask, isTask } from '../utils/task-utils';
 import {
   extractTaskTextFromLine,
   sanitizeFilename,
   updateTaskNoteSourceFile
 } from './task-note-manager';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // TASK SCHEDULER MODULE
 // ============================================================================
 
 // Remove existing scheduling tags from a line
-export function removeSchedulingTags(line) {
+export function removeSchedulingTags(line: string): string {
   return line
     // Text format: >[[DATE]] and <[[DATE]]
     .replace(/\s*>\[\[\d{4}-\d{2}-\d{2}\]\]/g, '')
@@ -30,12 +32,12 @@ export function removeSchedulingTags(line) {
 }
 
 // Get current date in YYYY-MM-DD format
-export function getCurrentDate() {
+export function getCurrentDate(): string {
   return new Date().toISOString().split('T')[0];
 }
 
 // Get the daily note path for a given date
-export function getDailyNotePath(date, settings) {
+export function getDailyNotePath(date: string, settings: TaskManagerSettings): string {
   // Use the first target folder as the daily notes folder
   const dailyFolder = settings.targetFolders[0];
   const folder = dailyFolder.replace(/\/$/, '');
@@ -43,7 +45,7 @@ export function getDailyNotePath(date, settings) {
 }
 
 // Create the scheduled copy of a task (for the target date)
-export function createScheduledTaskCopy(line, fromDate) {
+export function createScheduledTaskCopy(line: string, fromDate: string): string {
   // Remove the [>] marker and restore to [ ] for the copy
   let taskCopy = line.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
   // Remove any existing scheduling tags and calendar icons
@@ -56,7 +58,7 @@ export function createScheduledTaskCopy(line, fromDate) {
 }
 
 // Mark the original task as scheduled
-export function markTaskAsScheduled(line, toDate) {
+export function markTaskAsScheduled(line: string, toDate: string): string {
   // Change marker to [>]
   let newLine = line.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
   // Remove time block (e.g., "13:45 - 15:15 " at start of task text)
@@ -69,7 +71,7 @@ export function markTaskAsScheduled(line, toDate) {
 }
 
 // Extract target date from >[[YYYY-MM-DD]] or legacy formats
-export function extractScheduledToDate(line) {
+export function extractScheduledToDate(line: string): string | null {
   // Text format: >[[YYYY-MM-DD]]
   let match = line.match(/>\[\[(\d{4}-\d{2}-\d{2})\]\]/);
   if (match) return match[1];
@@ -82,13 +84,13 @@ export function extractScheduledToDate(line) {
 }
 
 // Check if a task is scheduled away (has [>] checkbox)
-export function isScheduledAway(line) {
+export function isScheduledAway(line: string): boolean {
   return /^[\t]*- \[>\]/.test(line);
 }
 
 // Reset a scheduled task back to actionable state
 // Changes [>] to [ ] and removes scheduling tags
-export function resetScheduledTask(line) {
+export function resetScheduledTask(line: string): string {
   // Change [>] marker back to [ ]
   let newLine = line.replace(/^([\t]*- \[)>(\])/, '$1 $2');
   // Remove all scheduling tags
@@ -125,7 +127,13 @@ export function resetScheduledTask(line) {
 //
 // ============================================================================
 
-export async function scheduleTask(app, settings, editor, lineNum, targetDate) {
+export async function scheduleTask(
+  app: App,
+  settings: TaskManagerSettings,
+  editor: Editor,
+  lineNum: number,
+  targetDate: string
+): Promise<boolean> {
   // Re-read the line fresh (it may have changed since modal opened)
   const line = editor.getLine(lineNum);
   if (!isTask(line)) {
@@ -279,7 +287,12 @@ export async function scheduleTask(app, settings, editor, lineNum, targetDate) {
 //
 // ============================================================================
 
-export async function unscheduleTask(app, settings, editor, lineNum) {
+export async function unscheduleTask(
+  app: App,
+  settings: TaskManagerSettings,
+  editor: Editor,
+  lineNum: number
+): Promise<boolean> {
   const line = editor.getLine(lineNum);
 
   // Validate: must be a task
@@ -390,7 +403,13 @@ export async function unscheduleTask(app, settings, editor, lineNum) {
 }
 
 // Update task note when unscheduling - point sourceFile back to current file
-export async function updateTaskNoteForUnschedule(app, settings, taskText, currentFilePath, currentDate) {
+export async function updateTaskNoteForUnschedule(
+  app: App,
+  settings: TaskManagerSettings,
+  taskText: string,
+  currentFilePath: string,
+  currentDate: string
+): Promise<boolean> {
   const sanitizedName = sanitizeFilename(taskText);
   if (!sanitizedName) return false;
 

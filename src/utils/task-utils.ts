@@ -1,3 +1,6 @@
+import type { TFile } from 'obsidian';
+import type { TaskManagerSettings } from '../types';
+
 // ============================================================================
 // SHARED UTILITIES
 // ============================================================================
@@ -13,17 +16,17 @@ export const COMPLETED_PATTERN = /^[\t]*- \[[xX\->]\]/;
 export const TIMEBLOCK_PATTERN = /^- \[.\]\s*(\d{2}):(\d{2}) - (\d{2}):(\d{2})/;
 export const CALENDAR_EVENT_PATTERN = /^[\t]*- \[c\]/;
 
-export function extractId(line) {
+export function extractId(line: string): string | null {
   const match = line.match(ID_PATTERN);
   return match ? match[1].trim() : null;
 }
 
-export function extractParentId(line) {
+export function extractParentId(line: string): string | null {
   const match = line.match(PARENT_ID_PATTERN);
   return match ? match[1].trim() : null;
 }
 
-export function generateId(settings) {
+export function generateId(settings: TaskManagerSettings): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let id = settings.idPrefix;
   for (let i = 0; i < settings.idLength; i++) {
@@ -32,14 +35,14 @@ export function generateId(settings) {
   return id;
 }
 
-export function addId(line, id) {
+export function addId(line: string, id: string): string {
   if (extractId(line)) {
     return line;
   }
   return line.trimEnd() + ` [id::${id}]`;
 }
 
-export function addParentId(line, parentId) {
+export function addParentId(line: string, parentId: string): string {
   const existingParent = extractParentId(line);
   if (existingParent) {
     if (existingParent !== parentId) {
@@ -51,21 +54,21 @@ export function addParentId(line, parentId) {
 }
 
 
-export function removeParentId(line) {
+export function removeParentId(line: string): string {
   return line.replace(/\s*\[parent::[^\]]+\]/, '');
 }
 
-export function extractPriority(line) {
+export function extractPriority(line: string): number | null {
   const match = line.match(/\[priority::\s*(\d+)\]/);
   return match ? parseInt(match[1]) : null;
 }
 
-export function detectPriorityMarker(line) {
+export function detectPriorityMarker(line: string): number | null {
   const match = line.match(/^[\t]*- \[.\]\s*(?:\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s+)?(!!!|!!|!)\s/);
   return match ? match[1].length : null;
 }
 
-export function addPriority(line, level) {
+export function addPriority(line: string, level: number): string {
   const existing = extractPriority(line);
   if (existing === level) return line;
   if (existing !== null) {
@@ -74,31 +77,31 @@ export function addPriority(line, level) {
   return line.trimEnd() + ` [priority::${level}]`;
 }
 
-export function removePriority(line) {
+export function removePriority(line: string): string {
   return line.replace(/\s*\[priority::\s*\d+\]/, '');
 }
 
-export function isTask(line) {
+export function isTask(line: string): boolean {
   return TASK_PATTERN.test(line);
 }
 
-export function isCalendarEvent(line) {
+export function isCalendarEvent(line: string): boolean {
   return CALENDAR_EVENT_PATTERN.test(line);
 }
 
-export function isParentTask(line) {
+export function isParentTask(line: string): boolean {
   return PARENT_TASK_PATTERN.test(line);
 }
 
-export function isSubtask(line) {
+export function isSubtask(line: string): boolean {
   return SUBTASK_PATTERN.test(line);
 }
 
-export function isCompleted(line) {
+export function isCompleted(line: string): boolean {
   return COMPLETED_PATTERN.test(line);
 }
 
-export function getTaskSortKey(taskLine) {
+export function getTaskSortKey(taskLine: string): { hasTime: boolean; start: number; end: number } {
   const match = taskLine.match(TIMEBLOCK_PATTERN);
   if (match) {
     const startMinutes = parseInt(match[1]) * 60 + parseInt(match[2]);
@@ -108,7 +111,7 @@ export function getTaskSortKey(taskLine) {
   return { hasTime: false, start: Infinity, end: Infinity };
 }
 
-export function shouldProcessFile(file, settings) {
+export function shouldProcessFile(file: TFile, settings: TaskManagerSettings): boolean {
   if (file.extension !== 'md') return false;
   return settings.targetFolders.some(folder => file.path.includes(folder));
 }
@@ -116,7 +119,7 @@ export function shouldProcessFile(file, settings) {
 /**
  * Check if the task description text is already wrapped in a wiki link.
  */
-export function hasWikiLink(line) {
+export function hasWikiLink(line: string): boolean {
   // Check if line contains [[...]] in the task text portion
   return /^[\t]*- \[.\].*\[\[/.test(line);
 }
@@ -128,7 +131,7 @@ export function hasWikiLink(line) {
  *
  * Returns null if already linked or no description text found.
  */
-export function wrapTaskTextWithLink(line) {
+export function wrapTaskTextWithLink(line: string): string | null {
   if (!isTask(line)) return null;
   if (hasWikiLink(line)) return null;
 

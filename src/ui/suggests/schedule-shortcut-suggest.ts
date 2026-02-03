@@ -1,4 +1,6 @@
 import { EditorSuggest } from 'obsidian';
+import type { App, Editor, EditorPosition, EditorSuggestContext, EditorSuggestTriggerInfo, TFile } from 'obsidian';
+import type TaskManagerPlugin from '../../main';
 import { isTask } from '../../utils/task-utils';
 import { scheduleTask } from '../../services/task-scheduler';
 import { ScheduleDatePopup } from '../popups/schedule-date-popup';
@@ -9,13 +11,22 @@ import { Icons, SCHEDULE_SUGGESTIONS } from '../../constants';
 // SCHEDULE SHORTCUT SUGGEST (> triggers schedule suggestions)
 // ============================================================================
 
-export class ScheduleShortcutSuggest extends EditorSuggest {
-  constructor(app, plugin) {
+type ScheduleSuggestion = (typeof SCHEDULE_SUGGESTIONS)[number];
+type DynamicScheduleSuggestion =
+  | (ScheduleSuggestion & { disabled?: boolean })
+  | { id: 'direct-date'; label: string; icon: string; date: string }
+  | { id: 'typing-date'; label: string; icon: string; disabled: true }
+  | { id: 'no-match'; label: string; icon: string; disabled: true };
+
+export class ScheduleShortcutSuggest extends EditorSuggest<DynamicScheduleSuggestion> {
+  plugin: TaskManagerPlugin;
+
+  constructor(app: App, plugin: TaskManagerPlugin) {
     super(app);
     this.plugin = plugin;
   }
 
-  onTrigger(cursor, editor, file) {
+  onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
     if (!this.plugin.settings.enableScheduleTrigger) return null;
 
     const line = editor.getLine(cursor.line);
@@ -40,7 +51,7 @@ export class ScheduleShortcutSuggest extends EditorSuggest {
     };
   }
 
-  getSuggestions(context) {
+  getSuggestions(context: EditorSuggestContext): DynamicScheduleSuggestion[] {
     const query = context.query;
 
     // No query — show default options
@@ -72,26 +83,28 @@ export class ScheduleShortcutSuggest extends EditorSuggest {
     return matches;
   }
 
-  renderSuggestion(suggestion, el) {
+  renderSuggestion(suggestion: DynamicScheduleSuggestion, el: HTMLElement) {
     el.addClass('slash-command-item');
     const iconSpan = el.createSpan({ cls: 'slash-command-icon' });
     iconSpan.innerHTML = suggestion.icon;
     el.createSpan({ text: suggestion.label, cls: 'slash-command-label' });
-    if (suggestion.disabled) {
+    if ('disabled' in suggestion && suggestion.disabled) {
       el.addClass('is-disabled');
     }
   }
 
-  selectSuggestion(suggestion, evt) {
-    if (suggestion.disabled) return;
+  selectSuggestion(suggestion: DynamicScheduleSuggestion, evt: MouseEvent | KeyboardEvent) {
+    if ('disabled' in suggestion && suggestion.disabled) return;
+    const ctx = this.context;
+    if (!ctx) return;
 
-    const { editor } = this.context;
-    const lineNum = this.context.start.line;
+    const { editor } = ctx;
+    const lineNum = ctx.start.line;
 
     // Remove the > and any query text
-    editor.replaceRange('', this.context.start, this.context.end);
+    editor.replaceRange('', ctx.start, ctx.end);
 
-    if (suggestion.id === 'direct-date') {
+    if (suggestion.id === 'direct-date' && 'date' in suggestion) {
       // Schedule to the typed date
       scheduleTask(
         this.plugin.app,

@@ -2,23 +2,23 @@
 // SCHEDULE DATE OPTIONS
 // ============================================================================
 
-export function formatDate(date) {
+export function formatDate(date: Date): string {
   return date.toISOString().split('T')[0];
 }
 
-export function getTomorrow() {
+export function getTomorrow(): string {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   return formatDate(d);
 }
 
-export function getDayAfterTomorrow() {
+export function getDayAfterTomorrow(): string {
   const d = new Date();
   d.setDate(d.getDate() + 2);
   return formatDate(d);
 }
 
-export function getNextMonday() {
+export function getNextMonday(): string {
   const d = new Date();
   const dayOfWeek = d.getDay();
   // Days until next Monday: if today is Monday (1), go to next week's Monday (7 days)
@@ -28,7 +28,7 @@ export function getNextMonday() {
   return formatDate(d);
 }
 
-export function getOneWeekFromNow() {
+export function getOneWeekFromNow(): string {
   const d = new Date();
   d.setDate(d.getDate() + 7);
   return formatDate(d);
@@ -36,7 +36,7 @@ export function getOneWeekFromNow() {
 
 // Parse and normalize date input flexibly
 // Supports: YYYY-MM-DD, YYYYMMDD, and natural language via nldates plugin
-export function parseCustomDate(input, app) {
+export function parseCustomDate(input: string, app: App | null): string | null {
   if (!input) return null;
   const cleaned = input.trim();
 
@@ -61,10 +61,10 @@ export function parseCustomDate(input, app) {
 
 // Parse natural language date string using nldates-obsidian plugin
 // Returns YYYY-MM-DD string or null
-export function parseNaturalDate(input, app) {
+export function parseNaturalDate(input: string, app: App | null): string | null {
   if (!input || !app) return null;
   try {
-    const nldates = app.plugins.getPlugin('nldates-obsidian');
+    const nldates = (app as any).plugins?.getPlugin?.('nldates-obsidian');
     if (!nldates) return null;
     const result = nldates.parse(input, 'YYYY-MM-DD');
     if (result && result.formattedString && result.formattedString !== 'Invalid date') {
@@ -78,3 +78,4 @@ export function parseNaturalDate(input, app) {
   }
   return null;
 }
+import type { App } from 'obsidian';

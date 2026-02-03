@@ -1,4 +1,6 @@
 import { isCalendarEvent, shouldProcessFile } from '../utils/task-utils';
+import type { App, TFile } from 'obsidian';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // ICS CALENDAR EVENT SYNC MODULE
@@ -9,26 +11,37 @@ export const UID_PATTERN = /\[uid::([^\]]+)\]/;
 // Pattern to extract calendar source from calendar event line
 export const CALENDAR_PATTERN = /\[calendar::([^\]]+)\]/;
 
+type IcsEvent = {
+  uid?: string;
+  time?: string;
+  endTime?: string;
+  summary?: string;
+  location?: string;
+  callUrl?: string;
+  utime?: number;
+  icsName?: string;
+};
+
 // Extract UID from a calendar event line
-export function extractUid(line) {
+export function extractUid(line: string): string | null {
   const match = line.match(UID_PATTERN);
   return match ? match[1].trim() : null;
 }
 
 // Extract calendar source name from a calendar event line
-export function extractCalendar(line) {
+export function extractCalendar(line: string): string | null {
   const match = line.match(CALENDAR_PATTERN);
   return match ? match[1].trim() : null;
 }
 
 // Format time as HH:MM
-export function formatTime(hour, minute) {
+export function formatTime(hour: number, minute: number): string {
   return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
 }
 
 // Build a calendar event line from ICS event data
 // ICS plugin returns: { uid, time, endTime, summary, location, callUrl, utime, icsName, ... }
-export function buildEventLine(event, settings) {
+export function buildEventLine(event: IcsEvent, settings: TaskManagerSettings): string {
   // ICS plugin already formats times as strings like "10:00"
   const startTime = event.time || '00:00';
   const endTime = event.endTime || startTime;
@@ -58,7 +71,7 @@ export function buildEventLine(event, settings) {
 }
 
 // Check if a file is a daily note for a specific date
-export function getDailyNoteDate(file, settings) {
+export function getDailyNoteDate(file: TFile, settings: TaskManagerSettings): Date | null {
   // Check if file is in target folders
   if (!shouldProcessFile(file, settings)) return null;
 
@@ -70,9 +83,9 @@ export function getDailyNoteDate(file, settings) {
 }
 
 // Get events from ICS plugin for a specific date
-export async function getIcsEvents(app, date) {
+export async function getIcsEvents(app: App, date: Date): Promise<IcsEvent[] | null> {
   try {
-    const icsPlugin = app.plugins.getPlugin('ics');
+    const icsPlugin = (app as any).plugins?.getPlugin?.('ics');
     if (!icsPlugin || !icsPlugin.getEvents) {
       return null; // ICS plugin not available
     }
@@ -90,7 +103,7 @@ export async function getIcsEvents(app, date) {
 }
 
 // Sync ICS events into a daily note
-export async function syncEventsToNote(app, file, settings) {
+export async function syncEventsToNote(app: App, file: TFile, settings: TaskManagerSettings): Promise<boolean> {
   const noteDate = getDailyNoteDate(file, settings);
   if (!noteDate) return false;
 
@@ -107,8 +120,8 @@ export async function syncEventsToNote(app, file, settings) {
   const lines = content.split('\n');
 
   // Separate calendar events from other content
-  const calendarLines = [];
-  const otherLines = [];
+  const calendarLines: string[] = [];
+  const otherLines: string[] = [];
 
   for (const line of lines) {
     if (isCalendarEvent(line)) {
@@ -119,7 +132,7 @@ export async function syncEventsToNote(app, file, settings) {
   }
 
   // Build a map of existing events by UID
-  const existingByUid = new Map();
+  const existingByUid = new Map<string, string>();
   for (const line of calendarLines) {
     const uid = extractUid(line);
     if (uid) {
@@ -128,7 +141,7 @@ export async function syncEventsToNote(app, file, settings) {
   }
 
   // Build new calendar events list
-  const newCalendarLines = [];
+  const newCalendarLines: Array<{ line: string; utime: number }> = [];
 
   for (const event of icsEvents) {
     // Always use fresh data from ICS (overwrite)

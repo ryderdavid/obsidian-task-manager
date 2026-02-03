@@ -7,20 +7,28 @@ import {
   isParentTask,
   isSubtask
 } from '../utils/task-utils';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // TASK SORTER MODULE
 // ============================================================================
 
-export function sortContent(content, settings) {
+type TaskSortKey = ReturnType<typeof getTaskSortKey>;
+type ParentTask = { id: string | null; line: string; index: number };
+type Subtask = { parentId: string | null; line: string; index: number };
+type OtherLine = { line: string; index: number; isTaskArea: boolean };
+type TaskGroup = { parent: string; subtasks: string[]; sortKey: TaskSortKey };
+type CompletedGroup = { id: string | null; parent: string; subtasks: string[] };
+
+export function sortContent(content: string, settings: TaskManagerSettings): string {
   const lines = content.split('\n');
-  const result = [];
-  let completedTasks = [];
+  const result: string[] = [];
+  let completedTasks: CompletedGroup[] = [];
   let inCompletedSection = false;
 
-  const allParentTasks = [];
-  const allSubtasks = [];
-  const otherLines = [];
+  const allParentTasks: ParentTask[] = [];
+  const allSubtasks: Subtask[] = [];
+  const otherLines: OtherLine[] = [];
 
   let inTaskArea = false;
 
@@ -73,10 +81,10 @@ export function sortContent(content, settings) {
   }
 
   // Build task groups using parent IDs
-  const taskGroups = [];
+  const taskGroups: TaskGroup[] = [];
 
   for (const parentTask of allParentTasks) {
-    const group = {
+    const group: TaskGroup = {
       parent: parentTask.line,
       subtasks: [],
       sortKey: getTaskSortKey(parentTask.line)
@@ -195,7 +203,7 @@ export function sortContent(content, settings) {
 }
 
 // Sort all items (tasks and events) by time block, with unscheduled at bottom
-export function sortByTimeBlock(content, settings) {
+export function sortByTimeBlock(content: string, settings: TaskManagerSettings): string {
   const lines = content.split('\n');
 
   // Pattern to extract time from any line (tasks or events)
@@ -205,9 +213,15 @@ export function sortByTimeBlock(content, settings) {
   const ARCHIVE_LINE = /^> /;
 
   // Collect all items
-  const scheduledItems = [];  // Items with time blocks (tasks + events)
-  const unscheduledItems = []; // Items without time blocks
-  const archivedSection = [];  // Archived callout and its content
+  type TimeSortedItem = {
+    line: string;
+    subtasks: string[];
+    isEvent: boolean;
+  };
+  type ScheduledItem = TimeSortedItem & { startMinutes: number; endMinutes: number };
+  const scheduledItems: ScheduledItem[] = [];  // Items with time blocks (tasks + events)
+  const unscheduledItems: TimeSortedItem[] = []; // Items without time blocks
+  const archivedSection: string[] = [];  // Archived callout and its content
 
   let i = 0;
   let inArchiveSection = false;
@@ -243,7 +257,7 @@ export function sortByTimeBlock(content, settings) {
       const timeMatch = line.match(TIME_PATTERN);
 
       // Collect subtasks for parent tasks
-      const subtasks = [];
+      const subtasks: string[] = [];
       if (isParent) {
         const parentId = extractId(line);
         let j = i + 1;
@@ -260,16 +274,19 @@ export function sortByTimeBlock(content, settings) {
         i++;
       }
 
-      const item = {
+      const item: TimeSortedItem = {
         line,
         subtasks,
         isEvent: isEvent
       };
 
       if (timeMatch) {
-        item.startMinutes = parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]);
-        item.endMinutes = parseInt(timeMatch[3]) * 60 + parseInt(timeMatch[4]);
-        scheduledItems.push(item);
+        const scheduledItem: ScheduledItem = {
+          ...item,
+          startMinutes: parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]),
+          endMinutes: parseInt(timeMatch[3]) * 60 + parseInt(timeMatch[4])
+        };
+        scheduledItems.push(scheduledItem);
       } else {
         unscheduledItems.push(item);
       }

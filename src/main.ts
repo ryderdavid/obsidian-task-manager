@@ -1,5 +1,5 @@
-import { Plugin, Notice, TFile, EditorSuggest, MarkdownView } from 'obsidian';
-import { EditorView, Decoration, ViewPlugin } from '@codemirror/view';
+import { Plugin, Notice, TFile, TAbstractFile, EditorSuggest, MarkdownView, Editor, MarkdownPostProcessorContext, MarkdownFileInfo } from 'obsidian';
+import { EditorView, Decoration, ViewPlugin, DecorationSet, ViewUpdate } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
 import { DEFAULT_SETTINGS } from './constants';
 import * as TaskUtils from './utils/task-utils';
@@ -22,12 +22,19 @@ import { TimeblockShortcutSuggest } from './ui/suggests/timeblock-shortcut-sugge
 import { SlashCommandSuggest } from './ui/suggests/slash-command-suggest';
 import { ScheduleShortcutSuggest } from './ui/suggests/schedule-shortcut-suggest';
 import { TaskManagerSettingTab } from './settings/settings-tab';
+import { TaskManagerSettings } from './types';
 
 // ============================================================================
 // MAIN PLUGIN
 // ============================================================================
 
 class TaskManagerPlugin extends Plugin {
+  settings!: TaskManagerSettings;
+  isProcessing = false;
+  taskNoteSyncing = false;
+  taskNoteSyncTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  lastCursorLine = -1;
+
   async onload() {
     console.log('Task Manager: loaded');
 
@@ -41,18 +48,19 @@ class TaskManagerPlugin extends Plugin {
     // Register CodeMirror extension for info buttons and metadata hiding
     const infoButtonPlugin = ViewPlugin.fromClass(
       class {
-        constructor(view) {
+        decorations: DecorationSet;
+        constructor(view: EditorView) {
           this.decorations = this.buildDecorations(view, plugin);
         }
 
-        update(update) {
+        update(update: ViewUpdate) {
           if (update.docChanged || update.viewportChanged || update.selectionSet) {
             this.decorations = this.buildDecorations(update.view, plugin);
           }
         }
 
-        buildDecorations(view, plugin) {
-          const decorations = [];
+        buildDecorations(view: EditorView, plugin: TaskManagerPlugin): DecorationSet {
+          const decorations: Array<{ from: number; to: number; value: Decoration }> = [];
           const isSourceMode = !view.dom.closest('.is-live-preview');
           // Get cursor line to skip Decoration.replace on it (prevents backwards typing bug)
           const cursorHead = view.state.selection.main.head;
@@ -64,7 +72,7 @@ class TaskManagerPlugin extends Plugin {
           // Build metadata pattern from configured field names
           const fieldNames = plugin.settings.hiddenMetadataFieldNames
             .split(',')
-            .map(s => s.trim())
+            .map((s: string) => s.trim())
             .filter(s => s.length > 0);
           const metadataPattern = fieldNames.length > 0
             ? new RegExp(`\\s*\\[(?:${fieldNames.join('|')})::\\s*[^\\]]+\\]`, 'g')
@@ -198,7 +206,7 @@ class TaskManagerPlugin extends Plugin {
           // Sort decorations by position (required by RangeSetBuilder)
           decorations.sort((a, b) => a.from - b.from || a.to - b.to);
 
-          const builder = new RangeSetBuilder();
+          const builder = new RangeSetBuilder<Decoration>();
           for (const d of decorations) {
             builder.add(d.from, d.to, d.value);
           }
@@ -231,12 +239,14 @@ class TaskManagerPlugin extends Plugin {
 
     // Register cursor line change handler via CodeMirror extension
     const lineChangePlugin = ViewPlugin.fromClass(class {
-      constructor(view) {
+      plugin: TaskManagerPlugin;
+      lastLine: number;
+      constructor(view: EditorView) {
         this.plugin = plugin;
         this.lastLine = -1;
       }
 
-      update(update) {
+      update(update: ViewUpdate) {
         if (!update.selectionSet) return;
 
         const currentLine = update.state.doc.lineAt(update.state.selection.main.head).number - 1;
@@ -255,8 +265,9 @@ class TaskManagerPlugin extends Plugin {
     this.registerEditorExtension([lineChangePlugin]);
 
     // Prevent calendar event [c] checkboxes from being toggled
-    this.registerDomEvent(document, 'click', (evt) => {
-      const target = evt.target;
+    this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+      const target = evt.target as HTMLElement | null;
+      if (!target) return;
       // Check if clicking on a calendar event checkbox
       if (target.matches('input[data-task="c"], .task-list-item-checkbox[data-task="c"]')) {
         evt.preventDefault();
@@ -301,15 +312,18 @@ class TaskManagerPlugin extends Plugin {
     }, true); // Use capture phase to intercept before Obsidian handles it
 
     // Handle time block pill clicks to open TimePickerPopup
-    this.registerDomEvent(document, 'click', (evt) => {
-      const target = evt.target;
-      const pill = target.closest('.timeblock-pill');
+    this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
+      const target = evt.target as HTMLElement | null;
+      if (!target) return;
+      const pill = target.closest('.timeblock-pill') as HTMLElement | null;
       if (!pill) return;
 
       evt.preventDefault();
       evt.stopPropagation();
 
-      const lineNum = parseInt(pill.dataset.line, 10);
+      const lineValue = pill.dataset.line;
+      if (!lineValue) return;
+      const lineNum = parseInt(lineValue, 10);
       if (isNaN(lineNum)) return;
 
       // Get the active editor
@@ -323,8 +337,9 @@ class TaskManagerPlugin extends Plugin {
 
     // Register file modification event for both task note sync and debounced full-file processing
     this.registerEvent(
-      this.app.vault.on('modify', (file) => {
+      this.app.vault.on('modify', (file: TAbstractFile) => {
         if (this.isProcessing) return;
+        if (!(file instanceof TFile)) return;
 
         // Handle task note sync (files in task notes folder)
         if (this.settings.enableTaskNotes &&
@@ -357,7 +372,7 @@ class TaskManagerPlugin extends Plugin {
 
     // Register file open event for ICS calendar sync
     this.registerEvent(
-      this.app.workspace.on('file-open', async (file) => {
+      this.app.workspace.on('file-open', async (file: TFile | null) => {
         if (!file) return;
         if (!this.settings.enableIcsSync) return;
         if (this.isProcessing) return;
@@ -385,7 +400,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'assign-task-ids',
       name: 'Assign IDs to all tasks in current file',
-      editorCallback: (editor, view) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const content = editor.getValue();
         const updated = TaskIdManager.processContent(content, this.settings);
         if (content !== updated) {
@@ -397,7 +412,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'link-parent-child',
       name: 'Link subtasks to parent tasks in current file',
-      editorCallback: (editor, view) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         let content = editor.getValue();
         // Ensure IDs exist first
         content = TaskIdManager.processContent(content, this.settings);
@@ -411,7 +426,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'unlink-from-parent',
       name: 'Unlink task from parent',
-      editorCallback: (editor, view) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const cursor = editor.getCursor();
         const line = editor.getLine(cursor.line);
 
@@ -428,7 +443,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'sort-tasks',
       name: 'Sort tasks chronologically in current file',
-      editorCallback: (editor, view) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const content = editor.getValue();
         const sorted = TaskSorter.sortContent(content, this.settings);
         if (content !== sorted) {
@@ -440,7 +455,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'sort-by-time-block',
       name: 'Sort all items by time block',
-      editorCallback: (editor, view) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const content = editor.getValue();
         const sorted = TaskSorter.sortByTimeBlock(content, this.settings);
         if (content !== sorted) {
@@ -452,7 +467,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'show-task-info',
       name: 'Show task info for current line',
-      editorCallback: (editor, view) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const cursor = editor.getCursor();
         const line = editor.getLine(cursor.line);
         const taskId = TaskUtils.extractId(line);
@@ -472,7 +487,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'mark-task-complete',
       name: 'Mark task complete',
-      editorCheckCallback: (checking, editor, view) => {
+      editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const cursor = editor.getCursor();
         const line = editor.getLine(cursor.line);
         if (!TaskUtils.isTask(line)) return false;
@@ -485,7 +500,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'mark-task-in-progress',
       name: 'Mark task in progress',
-      editorCheckCallback: (checking, editor, view) => {
+      editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const cursor = editor.getCursor();
         const line = editor.getLine(cursor.line);
         if (!TaskUtils.isTask(line)) return false;
@@ -498,7 +513,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'mark-task-cancelled',
       name: 'Mark task cancelled',
-      editorCheckCallback: (checking, editor, view) => {
+      editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const cursor = editor.getCursor();
         const line = editor.getLine(cursor.line);
         if (!TaskUtils.isTask(line)) return false;
@@ -564,7 +579,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'schedule-task',
       name: 'Schedule task',
-      editorCheckCallback: (checking, editor, view) => {
+      editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const cursor = editor.getCursor();
         const line = editor.getLine(cursor.line);
         if (!TaskUtils.isTask(line)) return false;
@@ -577,7 +592,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'unschedule-task',
       name: 'Unschedule task',
-      editorCheckCallback: (checking, editor, view) => {
+      editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const cursor = editor.getCursor();
         const line = editor.getLine(cursor.line);
         // Must be a task
@@ -612,7 +627,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'create-task-note',
       name: 'Create task note and link',
-      editorCheckCallback: (checking, editor, view) => {
+      editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile || !TaskUtils.shouldProcessFile(activeFile, this.settings)) return false;
         if (!this.settings.enableTaskNotes) return false;
@@ -694,7 +709,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'schedule-overdue-to-this-note',
       name: 'Schedule all overdue tasks to this note\'s date',
-      checkCallback: (checking) => {
+      checkCallback: (checking: boolean) => {
         // Only available when viewing a daily note
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile) return false;
@@ -714,7 +729,7 @@ class TaskManagerPlugin extends Plugin {
     this.addCommand({
       id: 'archive-completed-tasks',
       name: 'Archive completed/scheduled tasks now',
-      editorCallback: async (editor, view) => {
+      editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const file = view.file;
         if (!file || !TaskUtils.shouldProcessFile(file, this.settings)) {
           new Notice('This command only works in target folders');
@@ -734,18 +749,18 @@ class TaskManagerPlugin extends Plugin {
     });
 
     // Hide configured metadata fields in Reading View
-    this.registerMarkdownPostProcessor((element, context) => {
+    this.registerMarkdownPostProcessor((element: HTMLElement, context: MarkdownPostProcessorContext) => {
       if (!this.settings.hideMetadataFields) return;
       const fieldNames = this.settings.hiddenMetadataFieldNames
         .split(',')
-        .map(s => s.trim())
+        .map((s: string) => s.trim())
         .filter(s => s.length > 0);
       for (const name of fieldNames) {
-        const els = element.querySelectorAll(
+        const els = element.querySelectorAll<HTMLElement>(
           `.dataview.inline-field[data-dv-key="${name}"], ` +
           `.dataview.inline-field-standalone[data-dv-key="${name}"]`
         );
-        for (const el of els) {
+        for (const el of Array.from(els)) {
           el.style.display = 'none';
         }
       }
@@ -780,7 +795,7 @@ class TaskManagerPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
-  async processFile(file) {
+  async processFile(file: TFile) {
     this.isProcessing = true;
 
     try {
@@ -883,7 +898,7 @@ class TaskManagerPlugin extends Plugin {
   }
 
   // Helper method to update task note status from commands/buttons
-  async updateTaskNoteStatus(file, newStatus) {
+  async updateTaskNoteStatus(file: TFile, newStatus: string) {
     const content = await this.app.vault.read(file);
     const currentStatus = TaskNoteManager.extractFrontmatterField(content, 'status');
 
@@ -906,7 +921,7 @@ class TaskManagerPlugin extends Plugin {
   }
 
   // Update meta-bind button styles so only the active status has style: primary
-  updateButtonHighlighting(content, activeStatus) {
+  updateButtonHighlighting(content: string, activeStatus: string) {
     // Map status names to button IDs
     const statusToButtonId = {
       'incomplete': 'btn-incomplete',
@@ -915,21 +930,21 @@ class TaskManagerPlugin extends Plugin {
       'complete': 'btn-complete'
     };
 
-    const activeButtonId = statusToButtonId[activeStatus];
+    const activeButtonId = statusToButtonId[activeStatus as keyof typeof statusToButtonId];
     if (!activeButtonId) return content;
 
     // Find all meta-bind-button blocks and update their styles
     // Pattern matches the button block including the id line
     const buttonBlockRegex = /(```meta-bind-button\n(?:> )?label: "[^"]+"\n(?:> )?style: )(primary|default)(\n(?:> )?id: (btn-[a-z-]+))/g;
 
-    return content.replace(buttonBlockRegex, (match, prefix, currentStyle, suffix, buttonId) => {
+    return content.replace(buttonBlockRegex, (match: string, prefix: string, currentStyle: string, suffix: string, buttonId: string) => {
       const newStyle = (buttonId === activeButtonId) ? 'primary' : 'default';
       return prefix + newStyle + suffix;
     });
   }
 
   // Process a single line when cursor leaves it (add ID, parent link)
-  processLineOnLeave(lineNum) {
+  processLineOnLeave(lineNum: number) {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView) return;
 
@@ -993,7 +1008,16 @@ class TaskManagerPlugin extends Plugin {
     }
   }
 
-  showTaskInfo(taskId, parentId, taskText, editor, lineNum, uid, isCalendarEvent, calendarSource) {
+  showTaskInfo(
+    taskId: string | null,
+    parentId: string | null,
+    taskText: string | null,
+    editor: Editor | null,
+    lineNum?: number,
+    uid?: string | null,
+    isCalendarEvent?: boolean,
+    calendarSource?: string | null
+  ) {
     // Find parent task text by ID if we have a parentId
     let parentText = null;
     if (parentId) {
@@ -1022,12 +1046,12 @@ class TaskManagerPlugin extends Plugin {
         editor.setLine(lineNum, newLine);
         new Notice('Task unlinked from parent');
       }
-    }, uid, isCalendarEvent, calendarSource);
+    }, uid ?? null, isCalendarEvent ?? false, calendarSource ?? null);
     modal.open();
   }
 
   // Show schedule popup positioned relative to a widget element
-  showSchedulePopupFromWidget(anchorEl, lineNum) {
+  showSchedulePopupFromWidget(anchorEl: HTMLElement, lineNum: number) {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view || !view.editor) return;
 
@@ -1037,7 +1061,7 @@ class TaskManagerPlugin extends Plugin {
   }
 
   // Show timeblock picker positioned relative to a widget element
-  showTimeblockPickerFromWidget(anchorEl, lineNum) {
+  showTimeblockPickerFromWidget(anchorEl: HTMLElement, lineNum: number) {
     const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view || !view.editor) return;
 

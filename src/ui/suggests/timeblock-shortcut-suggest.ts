@@ -1,4 +1,6 @@
 import { EditorSuggest } from 'obsidian';
+import type { App, Editor, EditorPosition, EditorSuggestContext, EditorSuggestTriggerInfo, TFile } from 'obsidian';
+import type TaskManagerPlugin from '../../main';
 import { isTask } from '../../utils/task-utils';
 import { TimePickerPopup } from '../popups/time-picker-popup';
 import { TIMEBLOCK_SUGGESTIONS } from '../../constants';
@@ -7,13 +9,17 @@ import { TIMEBLOCK_SUGGESTIONS } from '../../constants';
 // TIMEBLOCK SHORTCUT SUGGEST (^ triggers timeblock suggestions)
 // ============================================================================
 
-export class TimeblockShortcutSuggest extends EditorSuggest {
-  constructor(app, plugin) {
+type TimeblockSuggestion = (typeof TIMEBLOCK_SUGGESTIONS)[number];
+
+export class TimeblockShortcutSuggest extends EditorSuggest<TimeblockSuggestion> {
+  plugin: TaskManagerPlugin;
+
+  constructor(app: App, plugin: TaskManagerPlugin) {
     super(app);
     this.plugin = plugin;
   }
 
-  onTrigger(cursor, editor, file) {
+  onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
     if (!this.plugin.settings.enableTimeblockTrigger) return null;
 
     const line = editor.getLine(cursor.line);
@@ -40,26 +46,28 @@ export class TimeblockShortcutSuggest extends EditorSuggest {
     };
   }
 
-  getSuggestions(context) {
+  getSuggestions(context: EditorSuggestContext): TimeblockSuggestion[] {
     const query = context.query;
     return TIMEBLOCK_SUGGESTIONS.filter(s =>
       s.label.toLowerCase().includes(query.toLowerCase())
     );
   }
 
-  renderSuggestion(suggestion, el) {
+  renderSuggestion(suggestion: TimeblockSuggestion, el: HTMLElement) {
     el.addClass('slash-command-item');
     const iconSpan = el.createSpan({ cls: 'slash-command-icon' });
     iconSpan.innerHTML = suggestion.icon;
     el.createSpan({ text: suggestion.label, cls: 'slash-command-label' });
   }
 
-  selectSuggestion(suggestion, evt) {
-    const { editor } = this.context;
-    const lineNum = this.context.start.line;
+  selectSuggestion(suggestion: TimeblockSuggestion, evt: MouseEvent | KeyboardEvent) {
+    const ctx = this.context;
+    if (!ctx) return;
+    const { editor } = ctx;
+    const lineNum = ctx.start.line;
 
     // Remove the ^ and any query text
-    editor.replaceRange('', this.context.start, this.context.end);
+    editor.replaceRange('', ctx.start, ctx.end);
 
     if (suggestion.id === 'set-time') {
       const popup = new TimePickerPopup(this.plugin, editor, lineNum, 'start');

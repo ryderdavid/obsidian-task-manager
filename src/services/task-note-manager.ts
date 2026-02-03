@@ -1,11 +1,22 @@
 import { Notice, TFile } from 'obsidian';
+import type { App } from 'obsidian';
 import { CALENDAR_EVENT_PATTERN, extractId } from '../utils/task-utils';
+import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
 // TASK NOTE MANAGER MODULE
 // ============================================================================
 
-export function cleanTaskText(text) {
+type TaskExtraFields = {
+  parent?: string;
+  scheduledFrom?: string;
+  scheduledTo?: string;
+  tags?: string[];
+};
+
+type Subtask = { text: string; completed: boolean; originalLine?: string };
+
+export function cleanTaskText(text: string): string {
   // Remove time ranges like "15:30 - 15:45"
   text = text.replace(/\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\s*/g, '');
   // Remove dates in various formats
@@ -18,7 +29,7 @@ export function cleanTaskText(text) {
   // Remove schedule tags >[[DATE]] and <[[DATE]] (must come before wikilink handling)
   text = text.replace(/\s*[><]\[\[\d{4}-\d{2}-\d{2}\]\]/g, '');
   // Remove wiki links but keep display text
-  text = text.replace(/\[\[([^\]|]+)\|?([^\]]*)\]\]/g, (m, link, display) => display || link);
+  text = text.replace(/\[\[([^\]|]+)\|?([^\]]*)\]\]/g, (m: string, link: string, display: string) => display || link);
   // Remove task metadata emojis
   text = text.replace(/[📅🗓️⏳🛫✅❌➕🔺⏫🔼🔽⏬🆔⛔🔁][^\s]*/g, '');
   // Remove button icons
@@ -35,7 +46,7 @@ export function cleanTaskText(text) {
   return text;
 }
 
-export function sanitizeFilename(text) {
+export function sanitizeFilename(text: string): string {
   return text
     .replace(/[\\/:*?"<>|#\[\]]/g, '-')
     .replace(/-+/g, '-')
@@ -44,7 +55,7 @@ export function sanitizeFilename(text) {
     .substring(0, 100);
 }
 
-export function extractTaskTextFromLine(line) {
+export function extractTaskTextFromLine(line: string): string | null {
   // Match any task marker (space, x, >, /, -, etc.)
   // Also match tasks in callouts (prefixed with "> ") for archive support
   const taskMatch = line.match(/^(?:>\s*)?- \[.\]\s*(.+)$/);
@@ -52,17 +63,17 @@ export function extractTaskTextFromLine(line) {
   return cleanTaskText(taskMatch[1]);
 }
 
-export function extractCheckboxMarker(line) {
+export function extractCheckboxMarker(line: string): string | null {
   // Extract the character inside the checkbox brackets
   const match = line.match(/^[\t]*- \[(.)\]/);
   return match ? match[1] : null;
 }
 
-export function checkboxToStatus(marker, settings) {
+export function checkboxToStatus(marker: string, settings: TaskManagerSettings): string {
   return settings.statusMappings[marker] || 'incomplete';
 }
 
-export function statusToCheckbox(status, settings) {
+export function statusToCheckbox(status: string, settings: TaskManagerSettings): string {
   // Reverse lookup: find marker for status name
   for (const [marker, name] of Object.entries(settings.statusMappings)) {
     if (name === status) return marker;
@@ -70,7 +81,7 @@ export function statusToCheckbox(status, settings) {
   return ' ';
 }
 
-export function extractFrontmatterField(content, fieldName) {
+export function extractFrontmatterField(content: string, fieldName: string): string | null {
   const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
   if (!frontmatterMatch) return null;
   const frontmatter = frontmatterMatch[1];
@@ -78,7 +89,7 @@ export function extractFrontmatterField(content, fieldName) {
   return fieldMatch ? fieldMatch[1] : null;
 }
 
-export function updateFrontmatterField(content, fieldName, newValue) {
+export function updateFrontmatterField(content: string, fieldName: string, newValue: string): string {
   const frontmatterMatch = content.match(/^(---\n)([\s\S]*?)(\n---)/);
   if (!frontmatterMatch) return content;
 
@@ -97,7 +108,7 @@ export function updateFrontmatterField(content, fieldName, newValue) {
   return content.replace(fullMatch, start + updatedFrontmatter + end);
 }
 
-export function updateTaskCheckbox(content, taskId, newMarker) {
+export function updateTaskCheckbox(content: string, taskId: string, newMarker: string): string {
   const lines = content.split('\n');
   const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
 
@@ -112,7 +123,7 @@ export function updateTaskCheckbox(content, taskId, newMarker) {
   return lines.join('\n');
 }
 
-export async function findTaskNoteByTaskId(app, taskId, settings) {
+export async function findTaskNoteByTaskId(app: App, taskId: string, settings: TaskManagerSettings): Promise<TFile | null> {
   const folder = settings.taskNotesFolder;
   const files = app.vault.getFiles().filter(f => f.path.startsWith(folder + '/'));
 
@@ -134,7 +145,7 @@ export async function findTaskNoteByTaskId(app, taskId, settings) {
  * Sync status from task note frontmatter back to daily note checkbox
  * Called when task note is modified
  */
-export async function syncStatusToSource(app, taskNote, settings) {
+export async function syncStatusToSource(app: App, taskNote: TFile, settings: TaskManagerSettings): Promise<void> {
   if (!settings.enableTaskStatusSync) return;
 
   const content = await app.vault.read(taskNote);
@@ -175,7 +186,7 @@ export async function syncStatusToSource(app, taskNote, settings) {
  * Sync status from daily note checkbox to task note frontmatter
  * Called when daily note is modified
  */
-export async function syncStatusToTaskNote(app, taskId, newMarker, settings) {
+export async function syncStatusToTaskNote(app: App, taskId: string, newMarker: string, settings: TaskManagerSettings): Promise<void> {
   if (!settings.enableTaskStatusSync) return;
 
   const taskNote = await findTaskNoteByTaskId(app, taskId, settings);
@@ -200,7 +211,7 @@ export async function syncStatusToTaskNote(app, taskId, newMarker, settings) {
  * Extract all tasks with IDs from a daily note and sync their status to task notes
  * Called when daily note is modified (debounced)
  */
-export async function syncAllStatusesToTaskNotes(app, file, settings) {
+export async function syncAllStatusesToTaskNotes(app: App, file: TFile, settings: TaskManagerSettings): Promise<void> {
   if (!settings.enableTaskStatusSync) return;
 
   const content = await app.vault.read(file);
@@ -220,14 +231,14 @@ export async function syncAllStatusesToTaskNotes(app, file, settings) {
   }
 }
 
-export async function getSubtasksFromSource(app, sourceFilePath, parentTaskText) {
+export async function getSubtasksFromSource(app: App, sourceFilePath: string | null, parentTaskText: string): Promise<Subtask[]> {
   if (!sourceFilePath) return [];
   const sourceFile = app.vault.getAbstractFileByPath(sourceFilePath);
   if (!sourceFile || !(sourceFile instanceof TFile)) return [];
 
   const content = await app.vault.read(sourceFile);
   const lines = content.split('\n');
-  const subtasks = [];
+  const subtasks: Subtask[] = [];
 
   let parentLineIndex = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -244,7 +255,8 @@ export async function getSubtasksFromSource(app, sourceFilePath, parentTaskText)
 
   if (parentLineIndex === -1) return [];
 
-  const parentIndent = lines[parentLineIndex].match(/^(\s*)/)[1].length;
+  const parentIndentMatch = lines[parentLineIndex].match(/^(\s*)/);
+  const parentIndent = parentIndentMatch ? parentIndentMatch[1].length : 0;
 
   for (let i = parentLineIndex + 1; i < lines.length; i++) {
     const line = lines[i];
@@ -273,7 +285,12 @@ export async function getSubtasksFromSource(app, sourceFilePath, parentTaskText)
   return subtasks;
 }
 
-export async function syncSubtasksToTaskNote(app, taskNoteFile, sourceSubtasks, sourceFilePath) {
+export async function syncSubtasksToTaskNote(
+  app: App,
+  taskNoteFile: TFile,
+  sourceSubtasks: Subtask[],
+  sourceFilePath: string | null
+): Promise<void> {
   const content = await app.vault.read(taskNoteFile);
 
   const currentSourceMatch = content.match(/sourceFile:\s*"([^"]+)"/);
@@ -284,7 +301,7 @@ export async function syncSubtasksToTaskNote(app, taskNoteFile, sourceSubtasks, 
   if (!subtasksMatch) return;
 
   const existingSubtasksSection = subtasksMatch[1];
-  const existingSubtasks = [];
+  const existingSubtasks: Subtask[] = [];
   const lines = existingSubtasksSection.split('\n');
 
   for (const line of lines) {
@@ -294,7 +311,7 @@ export async function syncSubtasksToTaskNote(app, taskNoteFile, sourceSubtasks, 
     }
   }
 
-  const mergedSubtasks = [...existingSubtasks];
+  const mergedSubtasks: Subtask[] = [...existingSubtasks];
   for (const srcTask of sourceSubtasks) {
     const exists = existingSubtasks.some(et => et.text.toLowerCase() === srcTask.text.toLowerCase());
     if (!exists) {
@@ -339,7 +356,7 @@ export async function syncSubtasksToTaskNote(app, taskNoteFile, sourceSubtasks, 
   }
 }
 
-export async function syncSubtasksBackToSource(app, taskNoteFile, isSyncing) {
+export async function syncSubtasksBackToSource(app: App, taskNoteFile: TFile, isSyncing: boolean): Promise<boolean> {
   if (isSyncing) return false;
 
   const content = await app.vault.read(taskNoteFile);
@@ -358,7 +375,7 @@ export async function syncSubtasksBackToSource(app, taskNoteFile, isSyncing) {
   const subtasksMatch = content.match(/## Subtasks\n\n([\s\S]*?)(?=\n## |$)/);
   if (!subtasksMatch) return false;
 
-  const taskNoteSubtasks = [];
+  const taskNoteSubtasks: Subtask[] = [];
   const subtaskLines = subtasksMatch[1].split('\n');
   for (const line of subtaskLines) {
     const match = line.match(/^- \[([ x])\]\s*(.+)$/);
@@ -438,17 +455,17 @@ export async function syncSubtasksBackToSource(app, taskNoteFile, isSyncing) {
 /**
  * Extract inline fields and tags from a task line for frontmatter sync.
  */
-export function extractFieldsFromLine(line) {
-  const fields = {};
+export function extractFieldsFromLine(line: string): TaskExtraFields {
+  const fields: TaskExtraFields = {};
   const parentMatch = line.match(/\[parent::([^\]]+)\]/);
   if (parentMatch) fields.parent = parentMatch[1].trim();
   const schedFromMatch = line.match(/\[<\s*(\d{4}-\d{2}-\d{2})\]/);
   if (schedFromMatch) fields.scheduledFrom = schedFromMatch[1];
   const schedToMatch = line.match(/\[>\s*(\d{4}-\d{2}-\d{2})\]/);
   if (schedToMatch) fields.scheduledTo = schedToMatch[1];
-  const tags = [];
+  const tags: string[] = [];
   const tagRegex = /#(\w+)/g;
-  let tagMatch;
+  let tagMatch: RegExpExecArray | null;
   while ((tagMatch = tagRegex.exec(line)) !== null) {
     tags.push(tagMatch[1]);
   }
@@ -459,7 +476,13 @@ export function extractFieldsFromLine(line) {
 /**
  * Build frontmatter YAML string for a task note.
  */
-export function buildFrontmatter(taskText, taskId, status, sourceFilePath, extraFields = {}) {
+export function buildFrontmatter(
+  taskText: string,
+  taskId: string | null,
+  status: string,
+  sourceFilePath: string | null,
+  extraFields: TaskExtraFields = {}
+): string {
   let yaml = `---\ntask: "${taskText.replace(/"/g, '\\"')}"\ntaskId: "${taskId || ''}"`;
   yaml += `\nstatus: "${status}"`;
   yaml += `\ncreated: ${new Date().toISOString().split('T')[0]}`;
@@ -468,7 +491,7 @@ export function buildFrontmatter(taskText, taskId, status, sourceFilePath, extra
   if (extraFields.scheduledFrom) yaml += `\nscheduledFrom: ${extraFields.scheduledFrom}`;
   if (extraFields.scheduledTo) yaml += `\nscheduledTo: ${extraFields.scheduledTo}`;
   if (extraFields.tags && extraFields.tags.length > 0) {
-    yaml += `\ntags:\n${extraFields.tags.map(t => `  - ${t}`).join('\n')}`;
+    yaml += `\ntags:\n${extraFields.tags.map((t: string) => `  - ${t}`).join('\n')}`;
   }
   yaml += `\n---`;
   return yaml;
@@ -483,7 +506,14 @@ export function buildFrontmatter(taskText, taskId, status, sourceFilePath, extra
  * 2. By sanitized filename
  * 3. Create new if neither found
  */
-export async function ensureTaskNoteExists(app, settings, taskText, sourceFilePath, taskId = null, taskLine = null) {
+export async function ensureTaskNoteExists(
+  app: App,
+  settings: TaskManagerSettings,
+  taskText: string,
+  sourceFilePath: string | null,
+  taskId: string | null = null,
+  taskLine: string | null = null
+): Promise<TFile | null> {
   const sanitizedName = sanitizeFilename(taskText);
   if (!sanitizedName) return null;
 
@@ -530,7 +560,15 @@ export async function ensureTaskNoteExists(app, settings, taskText, sourceFilePa
   return await _createTaskNote(app, settings, taskText, taskId, sourceFilePath, filePath, taskLine);
 }
 
-export async function _createTaskNote(app, settings, taskText, taskId, sourceFilePath, filePath, taskLine) {
+export async function _createTaskNote(
+  app: App,
+  settings: TaskManagerSettings,
+  taskText: string,
+  taskId: string | null,
+  sourceFilePath: string | null,
+  filePath: string,
+  taskLine: string | null
+): Promise<TFile> {
   const folderPath = settings.taskNotesFolder;
   const folder = app.vault.getAbstractFileByPath(folderPath);
   if (!folder) {
@@ -631,12 +669,19 @@ ${subtasksContent}
 > \`\`\`
 `;
   const file = await app.vault.create(filePath, content);
-  const name = filePath.split('/').pop().replace(/\.md$/, '');
+  const baseName = filePath.split('/').pop() ?? filePath;
+  const name = baseName.replace(/\.md$/, '');
   new Notice(`Created: ${name}`);
   return file;
 }
 
-export async function openOrCreateTaskNote(app, settings, taskText, sourceFilePath, taskId = null) {
+export async function openOrCreateTaskNote(
+  app: App,
+  settings: TaskManagerSettings,
+  taskText: string,
+  sourceFilePath: string | null,
+  taskId: string | null = null
+): Promise<TFile | null> {
   const file = await ensureTaskNoteExists(app, settings, taskText, sourceFilePath, taskId);
   if (!file) {
     new Notice('Could not extract task name');
@@ -699,7 +744,13 @@ export async function openOrCreateTaskNote(app, settings, taskText, sourceFilePa
  * @param {string} scheduledDate - The target date in YYYY-MM-DD format
  * @returns {Promise<boolean>} True if Task Note was found and updated
  */
-export async function updateTaskNoteSourceFile(app, settings, taskText, newSourcePath, scheduledDate) {
+export async function updateTaskNoteSourceFile(
+  app: App,
+  settings: TaskManagerSettings,
+  taskText: string,
+  newSourcePath: string,
+  scheduledDate: string
+): Promise<boolean> {
   // Find the Task Note by sanitized task name
   const sanitizedName = sanitizeFilename(taskText);
   if (!sanitizedName) return false;

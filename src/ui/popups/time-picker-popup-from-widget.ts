@@ -1,34 +1,48 @@
 import { TimePickerPopup } from './time-picker-popup';
+import type { Editor } from 'obsidian';
+import type TaskManagerPlugin from '../../main';
 
 // Time picker popup that positions itself relative to an anchor element (for widget clicks)
 export class TimePickerPopupFromWidget extends TimePickerPopup {
-  constructor(plugin, editor, lineNum, mode, existingStart, onComplete, anchorEl) {
+  anchorEl: HTMLElement;
+
+  constructor(
+    plugin: TaskManagerPlugin,
+    editor: Editor,
+    lineNum: number,
+    mode: 'start' | 'end',
+    existingStart: { hour: number; minute: number } | null,
+    onComplete: ((hour: number, minute: number) => void) | null,
+    anchorEl: HTMLElement
+  ) {
     super(plugin, editor, lineNum, mode, existingStart, onComplete);
     this.anchorEl = anchorEl;
   }
 
   positionPopup() {
-    if (!this.anchorEl) return;
+    if (!this.anchorEl || !this.container) return;
 
     const rect = this.anchorEl.getBoundingClientRect();
-    this.container.style.position = 'absolute';
-    this.container.style.left = `${rect.left}px`;
-    this.container.style.top = `${rect.bottom + 5}px`;
-    this.container.style.zIndex = '1000';
+    const container = this.container;
+    if (!container) return;
+    container.style.position = 'absolute';
+    container.style.left = `${rect.left}px`;
+    container.style.top = `${rect.bottom + 5}px`;
+    container.style.zIndex = '1000';
 
     // Ensure popup stays within viewport
     requestAnimationFrame(() => {
-      const popupRect = this.container.getBoundingClientRect();
+      const popupRect = container.getBoundingClientRect();
       if (popupRect.right > window.innerWidth) {
-        this.container.style.left = `${window.innerWidth - popupRect.width - 10}px`;
+        container.style.left = `${window.innerWidth - popupRect.width - 10}px`;
       }
       if (popupRect.bottom > window.innerHeight) {
-        this.container.style.top = `${rect.top - popupRect.height - 5}px`;
+        container.style.top = `${rect.top - popupRect.height - 5}px`;
       }
     });
   }
 
-  selectTime(hour, minute) {
+  selectTime(hour: number, minute: number) {
     this.selectedHour = hour;
     this.close();
 
@@ -40,7 +54,7 @@ export class TimePickerPopupFromWidget extends TimePickerPopup {
         this.lineNum,
         'end',
         { hour: hour, minute: minute },
-        (endHour, endMinute) => {
+        (endHour: number, endMinute: number) => {
           this.applyTimeblock(hour, minute, endHour, endMinute);
         },
         this.anchorEl
