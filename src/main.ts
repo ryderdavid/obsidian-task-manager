@@ -1,16 +1,66 @@
-'use strict';
+import { Plugin, PluginSettingTab, Modal, Setting, Notice, TFile, EditorSuggest, MarkdownView } from 'obsidian';
+import { EditorView, Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
+import { RangeSetBuilder } from '@codemirror/state';
 
-const obsidian = require('obsidian');
-const { EditorView, Decoration, ViewPlugin, WidgetType } = require('@codemirror/view');
-const { RangeSetBuilder } = require('@codemirror/state');
+// ============================================================================
+// TYPES
+// ============================================================================
 
-declare const __GIT_BRANCH__: string;
+interface TaskManagerSettings {
+  // Scope
+  targetFolders: string[];
+
+  // Task IDs
+  enableTaskIds: boolean;
+  idPrefix: string;
+  idLength: number;
+
+  // Parent-Child Linking
+  enableParentChildLinking: boolean;
+  preserveExistingParentLinks: boolean;
+
+  // Sorting
+  enableAutoSort: boolean;
+  sortDebounceMs: number;
+  tasksWithoutTimePosition: string;
+
+  // UI
+  showInfoButton: boolean;
+  hideMetadataFields: boolean;
+  hiddenMetadataFieldNames: string;
+
+  // Task Notes
+  enableTaskNotes: boolean;
+  taskNotesFolder: string;
+
+  // Event Notes
+  enableEventNotes: boolean;
+  eventNotesFolder: string;
+
+  // ICS Calendar Sync
+  enableIcsSync: boolean;
+
+  // Auto-Archive
+  enableAutoArchive: boolean;
+
+  // Scheduling
+  overdueTasksTargetHeader: string;
+
+  // Shortcut Triggers
+  enableScheduleTrigger: boolean;
+  enableTimeblockTrigger: boolean;
+  enableSlashCommandTrigger: boolean;
+
+  // Task Status Sync
+  enableTaskStatusSync: boolean;
+  statusMappings: Record<string, string>;
+}
 
 // ============================================================================
 // DEFAULT SETTINGS
 // ============================================================================
 
-const DEFAULT_SETTINGS = {
+const DEFAULT_SETTINGS: TaskManagerSettings = {
   // Scope
   targetFolders: ['00 - Daily/'],
 
@@ -1064,7 +1114,7 @@ const TaskNoteManager = {
     if (!taskId || !status || !sourceFile) return;
 
     const source = app.vault.getAbstractFileByPath(sourceFile);
-    if (!source || !(source instanceof obsidian.TFile)) return;
+    if (!source || !(source instanceof TFile)) return;
 
     const targetMarker = this.statusToCheckbox(status, settings);
     const sourceContent = await app.vault.read(source);
@@ -1142,7 +1192,7 @@ const TaskNoteManager = {
   async getSubtasksFromSource(app, sourceFilePath, parentTaskText) {
     if (!sourceFilePath) return [];
     const sourceFile = app.vault.getAbstractFileByPath(sourceFilePath);
-    if (!sourceFile || !(sourceFile instanceof obsidian.TFile)) return [];
+    if (!sourceFile || !(sourceFile instanceof TFile)) return [];
 
     const content = await app.vault.read(sourceFile);
     const lines = content.split('\n');
@@ -1253,7 +1303,7 @@ const TaskNoteManager = {
 
       await app.vault.modify(taskNoteFile, finalContent);
       if (hasNewSubtasks) {
-        new obsidian.Notice(`Synced ${sourceSubtasks.length} subtask(s) from source`);
+        new Notice(`Synced ${sourceSubtasks.length} subtask(s) from source`);
       }
     }
   },
@@ -1268,7 +1318,7 @@ const TaskNoteManager = {
 
     const sourceFilePath = sourceMatch[1];
     const sourceFile = app.vault.getAbstractFileByPath(sourceFilePath);
-    if (!sourceFile || !(sourceFile instanceof obsidian.TFile)) return false;
+    if (!sourceFile || !(sourceFile instanceof TFile)) return false;
 
     const taskMatch = content.match(/task:\s*"?([^"\n]+)"?/);
     if (!taskMatch) return false;
@@ -1417,7 +1467,7 @@ const TaskNoteManager = {
     // Fall back to filename lookup
     if (!file) {
       const existing = app.vault.getAbstractFileByPath(filePath);
-      if (existing instanceof obsidian.TFile) {
+      if (existing instanceof TFile) {
         // Verify this note belongs to this task (check taskId in frontmatter)
         const content = await app.vault.read(existing);
         const noteTaskId = this.extractFrontmatterField(content, 'taskId');
@@ -1427,7 +1477,7 @@ const TaskNoteManager = {
           // Name collision — different task. Append task ID to filename.
           const altPath = `${folderPath}/${sanitizedName} (${taskId}).md`;
           const altFile = app.vault.getAbstractFileByPath(altPath);
-          if (altFile instanceof obsidian.TFile) {
+          if (altFile instanceof TFile) {
             file = altFile;
           }
           // If altFile doesn't exist, we'll create at altPath below
@@ -1438,7 +1488,7 @@ const TaskNoteManager = {
       }
     }
 
-    if (file instanceof obsidian.TFile) {
+    if (file instanceof TFile) {
       // Existing note — sync subtasks and source file
       const subtasksFromSource = await this.getSubtasksFromSource(app, sourceFilePath, taskText);
       await this.syncSubtasksToTaskNote(app, file, subtasksFromSource, sourceFilePath);
@@ -1462,7 +1512,7 @@ const TaskNoteManager = {
     let checkboxMarker = ' ';
     if (sourceFilePath && taskId) {
       const sourceFile = app.vault.getAbstractFileByPath(sourceFilePath);
-      if (sourceFile instanceof obsidian.TFile) {
+      if (sourceFile instanceof TFile) {
         const sourceContent = await app.vault.read(sourceFile);
         const idPattern = new RegExp(`\\[id::\\s*${taskId}\\]`);
         const lines = sourceContent.split('\n');
@@ -1551,17 +1601,17 @@ ${subtasksContent}
 `;
     const file = await app.vault.create(filePath, content);
     const name = filePath.split('/').pop().replace(/\.md$/, '');
-    new obsidian.Notice(`Created: ${name}`);
+    new Notice(`Created: ${name}`);
     return file;
   },
 
   async openOrCreateTaskNote(app, settings, taskText, sourceFilePath, taskId = null) {
     const file = await this.ensureTaskNoteExists(app, settings, taskText, sourceFilePath, taskId);
     if (!file) {
-      new obsidian.Notice('Could not extract task name');
+      new Notice('Could not extract task name');
       return null;
     }
-    if (file instanceof obsidian.TFile) {
+    if (file instanceof TFile) {
       await app.workspace.getLeaf().openFile(file);
     }
     return file;
@@ -1627,7 +1677,7 @@ ${subtasksContent}
     const file = app.vault.getAbstractFileByPath(filePath);
 
     // No Task Note exists for this task - that's fine, not all tasks have notes
-    if (!file || !(file instanceof obsidian.TFile)) {
+    if (!file || !(file instanceof TFile)) {
       return false;
     }
 
@@ -1757,7 +1807,7 @@ const EventNoteManager = {
   async openOrCreateEventNote(app, settings, eventTitle, uid, sourceFilePath, timeRange = null, calendarSource = null) {
     const sanitizedName = this.sanitizeFilename(eventTitle);
     if (!sanitizedName) {
-      new obsidian.Notice('Could not extract event name');
+      new Notice('Could not extract event name');
       return null;
     }
 
@@ -1809,10 +1859,10 @@ sourceFile: "${sourceFilePath || ''}"
 
 `;
       file = await app.vault.create(filePath, content);
-      new obsidian.Notice(`Created: ${sanitizedName}`);
+      new Notice(`Created: ${sanitizedName}`);
     }
 
-    if (file instanceof obsidian.TFile) {
+    if (file instanceof TFile) {
       await app.workspace.getLeaf().openFile(file);
     }
 
@@ -1944,13 +1994,13 @@ const TaskScheduler = {
     // Re-read the line fresh (it may have changed since modal opened)
     const line = editor.getLine(lineNum);
     if (!TaskUtils.isTask(line)) {
-      new obsidian.Notice('Not a task line');
+      new Notice('Not a task line');
       return false;
     }
 
     // Check if already scheduled to this date
     if (line.includes(`>[[${targetDate}]]`) || line.includes(`[scheduled_to:: [[${targetDate}]]]`) || line.includes(`[> ${targetDate}]`)) {
-      new obsidian.Notice('Task already scheduled to this date');
+      new Notice('Task already scheduled to this date');
       return false;
     }
 
@@ -1973,11 +2023,11 @@ const TaskScheduler = {
       }
       // Create empty daily note
       targetFile = await app.vault.create(targetPath, '');
-      new obsidian.Notice(`Created daily note: ${targetDate}`);
+      new Notice(`Created daily note: ${targetDate}`);
     }
 
-    if (!(targetFile instanceof obsidian.TFile)) {
-      new obsidian.Notice('Target is not a file');
+    if (!(targetFile instanceof TFile)) {
+      new Notice('Target is not a file');
       return false;
     }
 
@@ -2069,7 +2119,7 @@ const TaskScheduler = {
       );
     }
 
-    new obsidian.Notice(`Task scheduled to ${targetDate}`);
+    new Notice(`Task scheduled to ${targetDate}`);
     return true;
   },
 
@@ -2099,7 +2149,7 @@ const TaskScheduler = {
 
     // Validate: must be a task
     if (!TaskUtils.isTask(line)) {
-      new obsidian.Notice('Not a task line');
+      new Notice('Not a task line');
       return false;
     }
 
@@ -2108,7 +2158,7 @@ const TaskScheduler = {
     const hasScheduledMarker = this.isScheduledAway(line);
 
     if (!targetDate && !hasScheduledMarker) {
-      new obsidian.Notice('Task is not scheduled');
+      new Notice('Task is not scheduled');
       return false;
     }
 
@@ -2148,7 +2198,7 @@ const TaskScheduler = {
       const targetPath = this.getDailyNotePath(targetDate, settings);
       const targetFile = app.vault.getAbstractFileByPath(targetPath);
 
-      if (targetFile && targetFile instanceof obsidian.TFile) {
+      if (targetFile && targetFile instanceof TFile) {
         let targetContent = await app.vault.read(targetFile);
         const lines = targetContent.split('\n');
         const idPattern = new RegExp(`\\[id::\\s*${taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]`);
@@ -2200,7 +2250,7 @@ const TaskScheduler = {
       );
     }
 
-    new obsidian.Notice('Task unscheduled');
+    new Notice('Task unscheduled');
     return true;
   },
 
@@ -2212,7 +2262,7 @@ const TaskScheduler = {
     const filePath = `${settings.taskNotesFolder}/${sanitizedName}.md`;
     const file = app.vault.getAbstractFileByPath(filePath);
 
-    if (!file || !(file instanceof obsidian.TFile)) {
+    if (!file || !(file instanceof TFile)) {
       return false;
     }
 
@@ -2341,7 +2391,7 @@ const BulkScheduler = {
     const overdueTasks = await this.findOverdueTasks(app, settings, targetDate);
 
     if (overdueTasks.length === 0) {
-      new obsidian.Notice('No overdue tasks found');
+      new Notice('No overdue tasks found');
       return 0;
     }
 
@@ -2370,8 +2420,8 @@ const BulkScheduler = {
       targetFile = await app.vault.create(targetPath, '');
     }
 
-    if (!(targetFile instanceof obsidian.TFile)) {
-      new obsidian.Notice('Could not access target daily note');
+    if (!(targetFile instanceof TFile)) {
+      new Notice('Could not access target daily note');
       return 0;
     }
 
@@ -2384,7 +2434,7 @@ const BulkScheduler = {
     // Process each source file
     for (const [filePath, tasks] of tasksByFile) {
       const sourceFile = app.vault.getAbstractFileByPath(filePath);
-      if (!sourceFile || !(sourceFile instanceof obsidian.TFile)) continue;
+      if (!sourceFile || !(sourceFile instanceof TFile)) continue;
 
       let sourceContent = await app.vault.read(sourceFile);
       const sourceLines = sourceContent.split('\n');
@@ -2467,7 +2517,7 @@ const BulkScheduler = {
     // Write updated target file
     await app.vault.modify(targetFile, targetContent);
 
-    new obsidian.Notice(`Scheduled ${scheduledCount} overdue task(s) to ${targetDateStr}`);
+    new Notice(`Scheduled ${scheduledCount} overdue task(s) to ${targetDateStr}`);
     return scheduledCount;
   },
 
@@ -3035,11 +3085,11 @@ class TimePickerPopup {
     const line = this.editor.getLine(this.lineNum);
     const newLine = TimeblockUtils.addTimeblock(line, startHour, startMinute, endHour, endMinute);
     this.editor.setLine(this.lineNum, newLine);
-    new obsidian.Notice(`Timeblock set: ${TimeblockUtils.formatTime(startHour, startMinute)} - ${TimeblockUtils.formatTime(endHour, endMinute)}`);
+    new Notice(`Timeblock set: ${TimeblockUtils.formatTime(startHour, startMinute)} - ${TimeblockUtils.formatTime(endHour, endMinute)}`);
   }
 
   positionPopup() {
-    const view = this.plugin.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    const view = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return;
 
     const cm = view.editor.cm;
@@ -3168,7 +3218,7 @@ const TIMEBLOCK_SUGGESTIONS = [
   { id: 'set-time', label: 'Set Time Block...', icon: Icons.clock },
 ];
 
-class TimeblockShortcutSuggest extends obsidian.EditorSuggest {
+class TimeblockShortcutSuggest extends EditorSuggest {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -3241,7 +3291,7 @@ const SLASH_COMMANDS = [
   { id: 'timeblock', label: 'Set Time Block', icon: Icons.clock, action: 'timeblock' }
 ];
 
-class SlashCommandSuggest extends obsidian.EditorSuggest {
+class SlashCommandSuggest extends EditorSuggest {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -3333,7 +3383,7 @@ const SCHEDULE_SUGGESTIONS = [
   { id: 'pick-date', label: 'Pick a Date...', icon: Icons.anglesRight },
 ];
 
-class ScheduleShortcutSuggest extends obsidian.EditorSuggest {
+class ScheduleShortcutSuggest extends EditorSuggest {
   constructor(app, plugin) {
     super(app);
     this.plugin = plugin;
@@ -3540,7 +3590,7 @@ class ScheduleDatePopup {
 
   positionPopup() {
     // Get cursor position from CodeMirror
-    const view = this.plugin.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    const view = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view) return;
 
     const cm = view.editor.cm;
@@ -3621,7 +3671,7 @@ class ScheduleDatePopup {
     if (parsed) {
       this.scheduleToDate(parsed);
     } else {
-      new obsidian.Notice('Invalid date. Try YYYY-MM-DD, YYYYMMDD, or natural language (e.g. "tomorrow", "next monday")');
+      new Notice('Invalid date. Try YYYY-MM-DD, YYYYMMDD, or natural language (e.g. "tomorrow", "next monday")');
     }
   }
 
@@ -3762,7 +3812,7 @@ class GutterMoreWidget extends WidgetType {
 }
 
 // Modal for displaying task metadata
-class TaskInfoModal extends obsidian.Modal {
+class TaskInfoModal extends Modal {
   constructor(app, taskId, parentId, taskText, parentText, onUnlink, uid, isCalendarEvent, calendarSource) {
     super(app);
     this.taskId = taskId;
@@ -3855,7 +3905,7 @@ class TaskInfoModal extends obsidian.Modal {
 // SETTINGS TAB
 // ============================================================================
 
-class TaskManagerSettingTab extends obsidian.PluginSettingTab {
+class TaskManagerSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -3870,7 +3920,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // SCOPE SECTION
     containerEl.createEl('h3', { text: 'Scope' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Target folders')
       .setDesc('Comma-separated list of folder paths to process (e.g., "00 - Daily/, 01 - Projects/")')
       .addText(text => text
@@ -3884,7 +3934,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // TASK IDS SECTION
     containerEl.createEl('h3', { text: 'Task IDs' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable task IDs')
       .setDesc('Automatically assign unique IDs to all tasks')
       .addToggle(toggle => toggle
@@ -3894,7 +3944,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('ID prefix')
       .setDesc('Prefix for generated task IDs')
       .addText(text => text
@@ -3905,7 +3955,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('ID length')
       .setDesc('Number of random characters in task IDs')
       .addText(text => text
@@ -3922,7 +3972,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // PARENT-CHILD LINKING SECTION
     containerEl.createEl('h3', { text: 'Parent-Child Linking' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable parent-child linking')
       .setDesc('Automatically link subtasks to their parent tasks')
       .addToggle(toggle => toggle
@@ -3932,7 +3982,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Preserve existing parent links')
       .setDesc('Do not overwrite existing parent links when subtasks are moved')
       .addToggle(toggle => toggle
@@ -3945,7 +3995,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // SORTING SECTION
     containerEl.createEl('h3', { text: 'Sorting' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable auto-sort')
       .setDesc('Automatically sort tasks by time when file is modified')
       .addToggle(toggle => toggle
@@ -3955,7 +4005,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Sort debounce delay')
       .setDesc('Milliseconds to wait after last edit before sorting')
       .addText(text => text
@@ -3969,7 +4019,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           }
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Tasks without time position')
       .setDesc('Where to place tasks that do not have a timeblock')
       .addDropdown(dropdown => dropdown
@@ -3981,7 +4031,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Auto-archive completed tasks')
       .setDesc('Move completed, scheduled, and cancelled tasks to a collapsed section')
       .addToggle(toggle => toggle
@@ -3994,7 +4044,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // TASK STATUS SYNC SECTION
     containerEl.createEl('h3', { text: 'Task Status Sync' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable status sync')
       .setDesc('Sync task status between task notes and daily notes bidirectionally')
       .addToggle(toggle => toggle
@@ -4004,7 +4054,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Status mappings')
       .setDesc('Checkbox marker → status name mappings (JSON format)')
       .addTextArea(text => {
@@ -4026,7 +4076,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // DISPLAY SECTION
     containerEl.createEl('h3', { text: 'Display' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Show info button')
       .setDesc('Display info button (i) on tasks to view metadata')
       .addToggle(toggle => toggle
@@ -4036,7 +4086,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Hide metadata fields')
       .setDesc('Hide inline Dataview fields in the editor (e.g. [id::...], [parent::...])')
       .addToggle(toggle => toggle
@@ -4046,7 +4096,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Hidden field names')
       .setDesc('Comma-separated list of Dataview field names to hide (e.g. id, parent, uid, calendar)')
       .addText(text => text
@@ -4060,7 +4110,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // SHORTCUT TRIGGERS SECTION
     containerEl.createEl('h3', { text: 'Shortcut Triggers' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable > schedule trigger')
       .setDesc('Typing > on a task line shows schedule suggestions')
       .addToggle(toggle => toggle
@@ -4070,7 +4120,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable ^ timeblock trigger')
       .setDesc('Typing ^ on a task line shows timeblock suggestions')
       .addToggle(toggle => toggle
@@ -4080,7 +4130,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable / slash command trigger')
       .setDesc('Typing / on a task line shows command suggestions')
       .addToggle(toggle => toggle
@@ -4093,7 +4143,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // SCHEDULING SECTION
     containerEl.createEl('h3', { text: 'Scheduling' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Overdue tasks target header')
       .setDesc('Header under which overdue tasks are inserted (e.g. "## Tasks"). Leave empty to append to end of file.')
       .addText(text => text
@@ -4107,7 +4157,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // TASK NOTES SECTION
     containerEl.createEl('h3', { text: 'Task Notes' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable task notes')
       .setDesc('Show "notes" button on parent tasks to open dedicated task notes')
       .addToggle(toggle => toggle
@@ -4117,7 +4167,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Task notes folder')
       .setDesc('Folder where task notes will be created')
       .addText(text => text
@@ -4131,7 +4181,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // EVENT NOTES SECTION
     containerEl.createEl('h3', { text: 'Event Notes' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable event notes')
       .setDesc('Show "notes" button on calendar events to create/open dedicated event notes with eventUID in frontmatter')
       .addToggle(toggle => toggle
@@ -4141,7 +4191,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Event notes folder')
       .setDesc('Folder where event notes will be created')
       .addText(text => text
@@ -4155,7 +4205,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
     // ICS CALENDAR SYNC SECTION
     containerEl.createEl('h3', { text: 'Calendar Sync' });
 
-    new obsidian.Setting(containerEl)
+    new Setting(containerEl)
       .setName('Enable ICS calendar sync')
       .setDesc('Automatically sync calendar events from ICS plugin when opening daily notes. Events use [c] checkbox and are read-only.')
       .addToggle(toggle => toggle
@@ -4171,7 +4221,7 @@ class TaskManagerSettingTab extends obsidian.PluginSettingTab {
 // MAIN PLUGIN
 // ============================================================================
 
-class TaskManagerPlugin extends obsidian.Plugin {
+class TaskManagerPlugin extends Plugin {
   async onload() {
     console.log('Task Manager: loaded');
 
@@ -4433,7 +4483,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       evt.stopPropagation();
 
       // Place cursor at the link's position in the editor for editing
-      const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
       if (!view || !view.editor) return;
 
       // Switch to editing mode if in reading/preview mode
@@ -4457,7 +4507,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       if (isNaN(lineNum)) return;
 
       // Get the active editor
-      const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
       if (!view || !view.editor) return;
 
       const editor = view.editor;
@@ -4562,9 +4612,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
         if (TaskUtils.extractParentId(line)) {
           const newLine = TaskUtils.removeParentId(line);
           editor.setLine(cursor.line, newLine);
-          new obsidian.Notice('Task unlinked from parent');
+          new Notice('Task unlinked from parent');
         } else {
-          new obsidian.Notice('This task has no parent link');
+          new Notice('This task has no parent link');
         }
       }
     });
@@ -4606,7 +4656,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
         if (taskId || parentId) {
           this.showTaskInfo(taskId, parentId, taskText, editor, cursor.line);
         } else {
-          new obsidian.Notice('No task metadata on this line');
+          new Notice('No task metadata on this line');
         }
       }
     });
@@ -4659,7 +4709,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
         if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new obsidian.Notice('This command only works in task notes');
+          new Notice('This command only works in task notes');
           return;
         }
         await this.updateTaskNoteStatus(file, 'complete');
@@ -4672,7 +4722,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
         if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new obsidian.Notice('This command only works in task notes');
+          new Notice('This command only works in task notes');
           return;
         }
         await this.updateTaskNoteStatus(file, 'incomplete');
@@ -4685,7 +4735,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
         if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new obsidian.Notice('This command only works in task notes');
+          new Notice('This command only works in task notes');
           return;
         }
         await this.updateTaskNoteStatus(file, 'in-progress');
@@ -4698,7 +4748,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
         if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new obsidian.Notice('This command only works in task notes');
+          new Notice('This command only works in task notes');
           return;
         }
         await this.updateTaskNoteStatus(file, 'cancelled');
@@ -4785,7 +4835,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
         const taskText = TaskNoteManager.extractTaskTextFromLine(currentLine);
         if (!taskText || !taskText.trim()) {
-          new obsidian.Notice('Could not extract task text');
+          new Notice('Could not extract task text');
           return;
         }
 
@@ -4798,13 +4848,13 @@ class TaskManagerPlugin extends obsidian.Plugin {
               this.app, this.settings, taskText, sourceFilePath, taskId, currentLine
             );
             if (!file) {
-              new obsidian.Notice('Failed to create task note');
+              new Notice('Failed to create task note');
               return;
             }
 
             const lineNow = editor.getLine(cursor.line);
             if (!lineNow || TaskUtils.hasWikiLink(lineNow)) {
-              new obsidian.Notice('Task note created');
+              new Notice('Task note created');
               return;
             }
 
@@ -4815,10 +4865,10 @@ class TaskManagerPlugin extends obsidian.Plugin {
               setTimeout(() => { this.isProcessing = false; }, 50);
             }
 
-            new obsidian.Notice('Task note created and linked');
+            new Notice('Task note created and linked');
           } catch (err) {
             console.error('Task Manager: create task note failed', err);
-            new obsidian.Notice('Error creating task note');
+            new Notice('Error creating task note');
           }
         })();
       }
@@ -4861,7 +4911,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       editorCallback: async (editor, view) => {
         const file = view.file;
         if (!file || !TaskUtils.shouldProcessFile(file, this.settings)) {
-          new obsidian.Notice('This command only works in target folders');
+          new Notice('This command only works in target folders');
           return;
         }
 
@@ -4870,9 +4920,9 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
         if (archived !== content) {
           editor.setValue(archived);
-          new obsidian.Notice('Tasks archived');
+          new Notice('Tasks archived');
         } else {
-          new obsidian.Notice('No tasks to archive');
+          new Notice('No tasks to archive');
         }
       }
     });
@@ -4929,7 +4979,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
     try {
       // Check if this file is open in the active editor
-      const activeView = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+      const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
       const activeFile = this.app.workspace.getActiveFile();
       const isActiveFile = activeView && activeFile && activeFile.path === file.path;
 
@@ -5032,7 +5082,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
     const currentStatus = TaskNoteManager.extractFrontmatterField(content, 'status');
 
     if (currentStatus === newStatus) {
-      new obsidian.Notice(`Status already set to ${newStatus}`);
+      new Notice(`Status already set to ${newStatus}`);
       return;
     }
 
@@ -5044,7 +5094,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
     if (updated !== content) {
       await this.app.vault.modify(file, updated);
-      new obsidian.Notice(`Status changed to ${newStatus}`);
+      new Notice(`Status changed to ${newStatus}`);
       // The file modify handler will automatically sync to the daily note
     }
   }
@@ -5074,7 +5124,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
   // Process a single line when cursor leaves it (add ID, parent link)
   processLineOnLeave(lineNum) {
-    const activeView = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView) return;
 
     const activeFile = this.app.workspace.getActiveFile();
@@ -5144,7 +5194,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
       const activeFile = this.app.workspace.getActiveFile();
       if (activeFile) {
         // Get the current document content to search for parent
-        const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (view && view.editor) {
           const content = view.editor.getValue();
           const lines = content.split('\n');
@@ -5164,7 +5214,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
         const line = editor.getLine(lineNum);
         const newLine = TaskUtils.removeParentId(line);
         editor.setLine(lineNum, newLine);
-        new obsidian.Notice('Task unlinked from parent');
+        new Notice('Task unlinked from parent');
       }
     }, uid, isCalendarEvent, calendarSource);
     modal.open();
@@ -5172,7 +5222,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
   // Show schedule popup positioned relative to a widget element
   showSchedulePopupFromWidget(anchorEl, lineNum) {
-    const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view || !view.editor) return;
 
     const editor = view.editor;
@@ -5182,7 +5232,7 @@ class TaskManagerPlugin extends obsidian.Plugin {
 
   // Show timeblock picker positioned relative to a widget element
   showTimeblockPickerFromWidget(anchorEl, lineNum) {
-    const view = this.app.workspace.getActiveViewOfType(obsidian.MarkdownView);
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!view || !view.editor) return;
 
     const editor = view.editor;
@@ -5191,4 +5241,4 @@ class TaskManagerPlugin extends obsidian.Plugin {
   }
 }
 
-module.exports = TaskManagerPlugin;
+export default TaskManagerPlugin;
