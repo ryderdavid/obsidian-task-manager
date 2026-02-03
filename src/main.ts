@@ -1902,7 +1902,7 @@ const TaskScheduler = {
   // Get the daily note path for a given date
   getDailyNotePath(date, settings) {
     // Use the first target folder as the daily notes folder
-    const dailyFolder = settings.targetFolders[0] || '00 - Daily/';
+    const dailyFolder = settings.targetFolders[0];
     const folder = dailyFolder.replace(/\/$/, '');
     return `${folder}/${date}.md`;
   },
@@ -2328,7 +2328,7 @@ const BulkScheduler = {
   // Get all daily note files from target folders
   async getDailyNoteFiles(app, settings) {
     const files = [];
-    const targetFolders = settings.targetFolders || ['00 - Daily/'];
+    const targetFolders = settings.targetFolders;
 
     for (const folder of targetFolders) {
       const folderPath = folder.replace(/\/$/, '');
