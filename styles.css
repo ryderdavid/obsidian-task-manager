@@ -447,41 +447,29 @@ li[data-task=">"] > p > input {
 }
 
 /* ============================================
-   Metadata fields: line-level visibility control
-   Uses Decoration.line classes only — no Decoration.mark on text ranges
-   to avoid corrupting field values during editing (#36)
+   Metadata fields: visibility control
+   Cursor line: Decoration.mark with .metadata-muted (small, faded)
+   Non-cursor lines: Decoration.replace (hidden entirely)
+   Works with Dataview, Datacore, or neither.
    ============================================ */
 
-/* Dataview's rendered inline field spans on cursor line - style subtly */
-.has-muted-metadata .dataview.inline-field-key,
-.has-muted-metadata .dataview.inline-field-value,
-.has-muted-metadata .dataview.inline-field-standalone-value {
+.metadata-muted {
   font-size: 0.75em !important;
   opacity: 0.5 !important;
   color: var(--text-muted) !important;
   font-family: var(--font-text) !important;
+}
+
+/* Force all descendants (Dataview widgets, links, etc.) to inherit muted color */
+.metadata-muted * {
+  color: inherit !important;
+  text-decoration: none !important;
   background: none !important;
   background-color: transparent !important;
   border: none !important;
   padding: 0 !important;
   margin: 0 !important;
-}
-
-/* Add :: separator between key and value */
-.has-muted-metadata .dataview.inline-field-key::after {
-  content: '::';
-}
-
-/* Space between fields and between text and first field */
-.has-muted-metadata .dataview.inline-field-key {
-  margin-left: 0.5em !important;
-}
-
-/* Dataview's rendered inline field spans on non-cursor lines - fully hide */
-.has-hidden-metadata .dataview.inline-field-key,
-.has-hidden-metadata .dataview.inline-field-value,
-.has-hidden-metadata .dataview.inline-field-standalone-value {
-  display: none !important;
+  pointer-events: none !important;
 }
 
 /* ============================================

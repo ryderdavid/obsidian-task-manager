@@ -27,6 +27,7 @@ export const DEFAULT_SETTINGS: TaskManagerSettings = {
   showInfoButton: true,
   hideMetadataFields: true,
   hiddenMetadataFieldNames: 'id, parent, uid, calendar, priority',
+  disableSpellcheckOnTaskLines: true,
 
   // Task Notes
   enableTaskNotes: true,

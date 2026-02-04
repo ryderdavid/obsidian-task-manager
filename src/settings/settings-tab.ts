@@ -211,6 +211,16 @@ export class TaskManagerSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    new Setting(containerEl)
+      .setName('Disable spellcheck on task lines')
+      .setDesc('Prevents spellcheck underlines on task lines (useful for IDs and metadata)')
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.settings.disableSpellcheckOnTaskLines)
+        .onChange(async (value) => {
+          this.plugin.settings.disableSpellcheckOnTaskLines = value;
+          await this.plugin.saveSettings();
+        }));
+
     // SHORTCUT TRIGGERS SECTION
     containerEl.createEl('h3', { text: 'Shortcut Triggers' });
 

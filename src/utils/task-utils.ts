@@ -81,21 +81,6 @@ export function removePriority(line: string): string {
   return line.replace(/\s*\[priority::\s*\d+\]/, '');
 }
 
-/**
- * Repair metadata fields corrupted by Dataview's Decoration.replace.
- * Dataview's contenteditable handling can inject spurious spaces into
- * inline field values during type-then-delete sequences near field
- * boundaries. Since id/parent values are always compact alphanumeric
- * strings (e.g. t-xxh5prcw), any whitespace within them is corruption.
- *
- * Example: [id:: t-xxh 5 prcw] → [id::t-xxh5prcw]
- */
-export function repairCorruptedMetadata(line: string): string {
-  return line.replace(/\[(id|parent)::\s*([^\]]+)\]/g, (_match, key, value) => {
-    const cleaned = value.replace(/\s+/g, '');
-    return `[${key}::${cleaned}]`;
-  });
-}
 
 export function isTask(line: string): boolean {
   return TASK_PATTERN.test(line);
