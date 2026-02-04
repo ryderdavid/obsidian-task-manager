@@ -1,6 +1,8 @@
 import {
   extractId,
   extractParentId,
+  extractPriority,
+  detectPriorityMarker,
   getTaskSortKey,
   isCalendarEvent,
   isCompleted,
@@ -335,6 +337,102 @@ export function sortByTimeBlock(content: string, settings: TaskManagerSettings):
     result.push('');
     for (const line of archivedSection) {
       result.push(line);
+    }
+  }
+
+  return result.join('\n');
+}
+
+// ============================================================================
+// SMART SORT
+// ============================================================================
+
+const STATUS_MARKER_PATTERN = /^[\t]*- \[(.)\]/;
+
+/** Extract the checkbox status character from a task line. */
+function extractStatus(line: string): string {
+  const m = line.match(STATUS_MARKER_PATTERN);
+  return m ? m[1] : ' ';
+}
+
+/**
+ * Map a status character to a sort rank.
+ * Lower rank = higher in the list.
+ */
+function getStatusRank(status: string): number {
+  switch (status) {
+    case 'c': return 0; // calendar events — fixed, always top
+    case ' ': return 1; // unstarted
+    case '/': return 2; // in progress
+    case '>': return 3; // scheduled
+    case '-': return 4; // cancelled
+    case 'x':
+    case 'X': return 5; // done
+    default:  return 3; // unknown statuses sort with scheduled
+  }
+}
+
+/** Get the effective priority for a task line (higher = more urgent). */
+function getEffectivePriority(line: string): number {
+  return extractPriority(line) ?? detectPriorityMarker(line) ?? 0;
+}
+
+/**
+ * Smart sort: sorts tasks within each header section by status, then
+ * priority (highest first), then time block (earliest first).
+ * Preserves all non-task content in place.
+ *
+ * Status order: calendar → unstarted → in-progress → scheduled → cancelled → done
+ */
+export function smartSort(content: string, settings: TaskManagerSettings): string {
+  const lines = content.split('\n');
+  const sections = splitSections(lines);
+  const result: string[] = [];
+
+  for (const section of sections) {
+    if (section.header !== null) {
+      result.push(section.header);
+    }
+
+    const chunks = parseTaskChunks(section.bodyLines);
+
+    // Collect all task groups from this section
+    const taskGroups: TaskGroup[] = [];
+    for (const chunk of chunks) {
+      if (chunk.type === 'task') {
+        taskGroups.push(chunk.group);
+      }
+    }
+
+    // Sort by status rank → priority (desc) → time block (asc)
+    taskGroups.sort((a, b) => {
+      const statusA = getStatusRank(extractStatus(a.parent));
+      const statusB = getStatusRank(extractStatus(b.parent));
+      if (statusA !== statusB) return statusA - statusB;
+
+      const prioA = getEffectivePriority(a.parent);
+      const prioB = getEffectivePriority(b.parent);
+      if (prioA !== prioB) return prioB - prioA; // higher priority first
+
+      return chronologicalSort(a, b);
+    });
+
+    // Reconstruct: text stays in place, task slots get sorted tasks
+    let taskIndex = 0;
+    for (const chunk of chunks) {
+      if (chunk.type === 'text') {
+        result.push(chunk.line);
+      } else {
+        if (taskIndex < taskGroups.length) {
+          emitTaskGroup(taskGroups[taskIndex], result);
+          taskIndex++;
+        }
+      }
+    }
+
+    while (taskIndex < taskGroups.length) {
+      emitTaskGroup(taskGroups[taskIndex], result);
+      taskIndex++;
     }
   }
 

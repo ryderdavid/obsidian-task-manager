@@ -456,6 +456,18 @@ class TaskManagerPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: 'smart-sort',
+      name: 'Smart sort (status → priority → time)',
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+        const content = editor.getValue();
+        const sorted = TaskSorter.smartSort(content, this.settings);
+        if (content !== sorted) {
+          editor.setValue(sorted);
+        }
+      }
+    });
+
+    this.addCommand({
       id: 'show-task-info',
       name: 'Show task info for current line',
       editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
