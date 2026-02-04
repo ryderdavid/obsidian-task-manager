@@ -448,11 +448,10 @@ li[data-task=">"] > p > input {
 
 /* ============================================
    Metadata fields: visibility control
-   Cursor line: Decoration.mark with .metadata-muted (small, faded)
-   Non-cursor lines: Decoration.replace (hidden entirely)
-   Works with Dataview, Datacore, or neither.
+   DISABLED — kept for reference, will be restyled later.
    ============================================ */
 
+/*
 .metadata-muted {
   font-size: 0.75em !important;
   opacity: 0.5 !important;
@@ -460,7 +459,6 @@ li[data-task=">"] > p > input {
   font-family: var(--font-text) !important;
 }
 
-/* Force all descendants (Dataview widgets, links, etc.) to inherit muted color */
 .metadata-muted * {
   color: inherit !important;
   text-decoration: none !important;
@@ -471,6 +469,11 @@ li[data-task=">"] > p > input {
   margin: 0 !important;
   pointer-events: none !important;
 }
+
+.metadata-hidden {
+  display: none !important;
+}
+*/
 
 /* ============================================
    Priority Markers (!, !!, !!!)

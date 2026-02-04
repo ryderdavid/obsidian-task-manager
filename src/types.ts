@@ -24,6 +24,7 @@ export interface TaskManagerSettings {
   showInfoButton: boolean;
   hideMetadataFields: boolean;
   hiddenMetadataFieldNames: string;
+  alwaysVisibleMetadataFieldNames: string;
   disableSpellcheckOnTaskLines: boolean;
 
   // Task Notes
