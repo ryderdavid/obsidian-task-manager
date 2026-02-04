@@ -62,21 +62,27 @@ class TaskManagerPlugin extends Plugin {
         buildDecorations(view: EditorView, plugin: TaskManagerPlugin): DecorationSet {
           const decorations: Array<{ from: number; to: number; value: Decoration }> = [];
           const isSourceMode = !view.dom.closest('.is-live-preview');
-          // Get cursor line — metadata is muted (visible) on cursor line, hidden on others
-          const cursorHead = view.state.selection.main.head;
-          const cursorLine = cursorHead != null
-            ? view.state.doc.lineAt(cursorHead).number
-            : -1;
+          // DISABLED — cursor line tracking was for metadata muting
+          // const cursorHead = view.state.selection.main.head;
+          // const cursorLine = cursorHead != null
+          //   ? view.state.doc.lineAt(cursorHead).number
+          //   : -1;
           const taskPattern = TaskUtils.TASK_PATTERN;
           const parentTaskPattern = TaskUtils.PARENT_TASK_PATTERN;
-          // Build metadata pattern from configured field names
-          const fieldNames = plugin.settings.hiddenMetadataFieldNames
-            .split(',')
-            .map((s: string) => s.trim())
-            .filter(s => s.length > 0);
-          const metadataPattern = fieldNames.length > 0
-            ? new RegExp(`\\s*\\[(?:${fieldNames.join('|')})::\\s*[^\\]]+\\]`, 'g')
-            : null;
+          // DISABLED — metadata field decoration removed, kept for reference
+          // const fieldNames = plugin.settings.hiddenMetadataFieldNames
+          //   .split(',')
+          //   .map((s: string) => s.trim())
+          //   .filter(s => s.length > 0);
+          // const metadataPattern = fieldNames.length > 0
+          //   ? new RegExp(`\\s*\\[(?:${fieldNames.join('|')})::\\s*[^\\]]+\\]`, 'g')
+          //   : null;
+          // const alwaysVisibleFields = new Set(
+          //   plugin.settings.alwaysVisibleMetadataFieldNames
+          //     .split(',')
+          //     .map((s: string) => s.trim())
+          //     .filter(s => s.length > 0)
+          // );
           // Time block pattern: HH:MM - HH:MM at start of task text
           const timeblockPattern = /^([\t]*- \[.\]\s*)(\d{2}:\d{2}\s*-\s*\d{2}:\d{2})/;
           // Schedule tags (>[[DATE]], <[[DATE]]) are now visible text — no hiding needed
@@ -128,30 +134,26 @@ class TaskManagerPlugin extends Plugin {
                   });
                 }
 
-                // Hide metadata fields if enabled (only in Live Preview, not Source Mode)
-                // Uses Decoration.mark on cursor line (muted) and Decoration.replace
-                // on non-cursor lines (hidden). Works with Dataview, Datacore, or neither.
-                if (plugin.settings.hideMetadataFields && !isSourceMode && metadataPattern) {
-                  metadataPattern.lastIndex = 0;
-                  let match;
-                  while ((match = metadataPattern.exec(lineText)) !== null) {
-                    const mFrom = line.from + match.index;
-                    const mTo = mFrom + match[0].length;
-                    if (line.number === cursorLine) {
-                      decorations.push({
-                        from: mFrom,
-                        to: mTo,
-                        value: Decoration.mark({ class: 'metadata-muted' })
-                      });
-                    } else {
-                      decorations.push({
-                        from: mFrom,
-                        to: mTo,
-                        value: Decoration.replace({})
-                      });
-                    }
-                  }
-                }
+                // DISABLED — metadata field decoration removed, kept for reference
+                // if (plugin.settings.hideMetadataFields && !isSourceMode && metadataPattern) {
+                //   metadataPattern.lastIndex = 0;
+                //   let match;
+                //   while ((match = metadataPattern.exec(lineText)) !== null) {
+                //     const mFrom = line.from + match.index;
+                //     const mTo = mFrom + match[0].length;
+                //     const fieldNameMatch = match[0].match(/\[(\w+)::/);
+                //     const fieldName = fieldNameMatch ? fieldNameMatch[1] : '';
+                //     const isAlwaysVisible = alwaysVisibleFields.has(fieldName);
+                //     const markClass = (line.number === cursorLine || isAlwaysVisible)
+                //       ? 'metadata-muted'
+                //       : 'metadata-hidden';
+                //     decorations.push({
+                //       from: mFrom,
+                //       to: mTo,
+                //       value: Decoration.mark({ class: markClass })
+                //     });
+                //   }
+                // }
 
                 // Schedule tags (>[[DATE]], <[[DATE]]) are visible text — no hiding needed
                 // Legacy schedule tags ([> DATE], [scheduled_to::], [sch_to::]) are still
@@ -454,6 +456,18 @@ class TaskManagerPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: 'smart-sort',
+      name: 'Smart sort (status → priority → time)',
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+        const content = editor.getValue();
+        const sorted = TaskSorter.smartSort(content, this.settings);
+        if (content !== sorted) {
+          editor.setValue(sorted);
+        }
+      }
+    });
+
+    this.addCommand({
       id: 'show-task-info',
       name: 'Show task info for current line',
       editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
@@ -737,23 +751,23 @@ class TaskManagerPlugin extends Plugin {
       }
     });
 
-    // Hide configured metadata fields in Reading View
-    this.registerMarkdownPostProcessor((element: HTMLElement, context: MarkdownPostProcessorContext) => {
-      if (!this.settings.hideMetadataFields) return;
-      const fieldNames = this.settings.hiddenMetadataFieldNames
-        .split(',')
-        .map((s: string) => s.trim())
-        .filter(s => s.length > 0);
-      for (const name of fieldNames) {
-        const els = element.querySelectorAll<HTMLElement>(
-          `.dataview.inline-field[data-dv-key="${name}"], ` +
-          `.dataview.inline-field-standalone[data-dv-key="${name}"]`
-        );
-        for (const el of Array.from(els)) {
-          el.style.display = 'none';
-        }
-      }
-    });
+    // DISABLED — Reading View metadata hiding removed, kept for reference
+    // this.registerMarkdownPostProcessor((element: HTMLElement, context: MarkdownPostProcessorContext) => {
+    //   if (!this.settings.hideMetadataFields) return;
+    //   const fieldNames = this.settings.hiddenMetadataFieldNames
+    //     .split(',')
+    //     .map((s: string) => s.trim())
+    //     .filter(s => s.length > 0);
+    //   for (const name of fieldNames) {
+    //     const els = element.querySelectorAll<HTMLElement>(
+    //       `.dataview.inline-field[data-dv-key="${name}"], ` +
+    //       `.dataview.inline-field-standalone[data-dv-key="${name}"]`
+    //     );
+    //     for (const el of Array.from(els)) {
+    //       el.style.display = 'none';
+    //     }
+    //   }
+    // });
 
     // Add settings tab
     this.addSettingTab(new TaskManagerSettingTab(this.app, this));

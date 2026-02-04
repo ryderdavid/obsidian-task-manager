@@ -1,6 +1,8 @@
 import {
   extractId,
   extractParentId,
+  extractPriority,
+  detectPriorityMarker,
   getTaskSortKey,
   isCalendarEvent,
   isCompleted,
@@ -14,166 +16,164 @@ import type { TaskManagerSettings } from '../types';
 // ============================================================================
 
 type TaskSortKey = ReturnType<typeof getTaskSortKey>;
-type ParentTask = { id: string | null; line: string; index: number };
-type Subtask = { parentId: string | null; line: string; index: number };
-type OtherLine = { line: string; index: number; isTaskArea: boolean };
 type TaskGroup = { parent: string; subtasks: string[]; sortKey: TaskSortKey };
-type CompletedGroup = { id: string | null; parent: string; subtasks: string[] };
+type Chunk = { type: 'task'; group: TaskGroup } | { type: 'text'; line: string };
+type Section = { header: string | null; bodyLines: string[] };
 
+/**
+ * Parse a list of lines into an ordered sequence of chunks.
+ * Task groups (parent + immediately following subtasks) become task chunks;
+ * everything else becomes text chunks (preserved in place).
+ */
+function parseTaskChunks(bodyLines: string[]): Chunk[] {
+  const chunks: Chunk[] = [];
+  let i = 0;
+
+  while (i < bodyLines.length) {
+    const line = bodyLines[i];
+
+    if (isParentTask(line)) {
+      const id = extractId(line);
+      const subtasks: string[] = [];
+      let j = i + 1;
+
+      while (j < bodyLines.length && isSubtask(bodyLines[j])) {
+        const subtaskParentId = extractParentId(bodyLines[j]);
+        if (!subtaskParentId || subtaskParentId === id) {
+          subtasks.push(bodyLines[j]);
+        } else {
+          break;
+        }
+        j++;
+      }
+
+      chunks.push({
+        type: 'task',
+        group: { parent: line, subtasks, sortKey: getTaskSortKey(line) }
+      });
+      i = j;
+    } else if (isSubtask(line)) {
+      // Orphan subtask (no parent before it) — preserve as text
+      chunks.push({ type: 'text', line });
+      i++;
+    } else {
+      chunks.push({ type: 'text', line });
+      i++;
+    }
+  }
+
+  return chunks;
+}
+
+/** Split document content into sections delimited by markdown headers. */
+function splitSections(lines: string[]): Section[] {
+  const sections: Section[] = [];
+  let currentHeader: string | null = null;
+  let currentBody: string[] = [];
+
+  for (const line of lines) {
+    if (/^#/.test(line)) {
+      sections.push({ header: currentHeader, bodyLines: currentBody });
+      currentHeader = line;
+      currentBody = [];
+    } else {
+      currentBody.push(line);
+    }
+  }
+  sections.push({ header: currentHeader, bodyLines: currentBody });
+
+  return sections;
+}
+
+/** Standard chronological sort comparator for task groups. */
+function chronologicalSort(a: TaskGroup, b: TaskGroup): number {
+  if (a.sortKey.hasTime && !b.sortKey.hasTime) return -1;
+  if (!a.sortKey.hasTime && b.sortKey.hasTime) return 1;
+  if (a.sortKey.start !== b.sortKey.start) return a.sortKey.start - b.sortKey.start;
+  return a.sortKey.end - b.sortKey.end;
+}
+
+/** Emit a task group's lines into a result array. */
+function emitTaskGroup(group: TaskGroup, result: string[]): void {
+  result.push(group.parent);
+  for (const subtask of group.subtasks) {
+    result.push(subtask);
+  }
+}
+
+/**
+ * Sort tasks chronologically within each header section, preserving all
+ * non-task content in place. Completed tasks are collected and moved to
+ * a "## Completed" section at the end.
+ */
 export function sortContent(content: string, settings: TaskManagerSettings): string {
   const lines = content.split('\n');
   const result: string[] = [];
-  let completedTasks: CompletedGroup[] = [];
-  let inCompletedSection = false;
+  const sections = splitSections(lines);
 
-  const allParentTasks: ParentTask[] = [];
-  const allSubtasks: Subtask[] = [];
-  const otherLines: OtherLine[] = [];
+  // Find and separate the Completed section
+  const completedSectionIndex = sections.findIndex(s =>
+    s.header !== null && /^##\s*Completed\s*$/i.test(s.header)
+  );
 
-  let inTaskArea = false;
+  const allCompleted: TaskGroup[] = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  if (completedSectionIndex >= 0) {
+    const completedSection = sections.splice(completedSectionIndex, 1)[0];
+    for (const chunk of parseTaskChunks(completedSection.bodyLines)) {
+      if (chunk.type === 'task') {
+        allCompleted.push(chunk.group);
+      }
+    }
+  }
 
-    if (/^##\s*Completed\s*$/i.test(line)) {
-      inCompletedSection = true;
-      continue;
+  // Process each remaining section: sort incomplete tasks in-place,
+  // collect completed tasks for the Completed section.
+  for (const section of sections) {
+    if (section.header !== null) {
+      result.push(section.header);
     }
 
-    const isParent = isParentTask(line);
-    const isChild = isSubtask(line);
+    const chunks = parseTaskChunks(section.bodyLines);
 
-    if (inCompletedSection) {
-      if (isParent) {
-        completedTasks.push({ id: extractId(line), parent: line, subtasks: [] });
-      } else if (isChild && completedTasks.length > 0) {
-        const parentId = extractParentId(line);
-        if (parentId) {
-          const parentTask = completedTasks.find(t => t.id === parentId);
-          if (parentTask) {
-            parentTask.subtasks.push(line);
-          } else {
-            completedTasks[completedTasks.length - 1].subtasks.push(line);
-          }
+    // Separate incomplete and completed task groups
+    const incompleteGroups: TaskGroup[] = [];
+    for (const chunk of chunks) {
+      if (chunk.type === 'task') {
+        if (isCompleted(chunk.group.parent)) {
+          allCompleted.push(chunk.group);
         } else {
-          completedTasks[completedTasks.length - 1].subtasks.push(line);
-        }
-      } else if (/^#/.test(line)) {
-        inCompletedSection = false;
-        otherLines.push({ line, index: i, isTaskArea: false });
-      }
-      continue;
-    }
-
-    if (isParent) {
-      if (!inTaskArea) {
-        inTaskArea = true;
-      }
-      allParentTasks.push({ id: extractId(line), line, index: i });
-    } else if (isChild) {
-      allSubtasks.push({ parentId: extractParentId(line), line, index: i });
-    } else {
-      if (inTaskArea && /^#/.test(line)) {
-        inTaskArea = false;
-      }
-      otherLines.push({ line, index: i, isTaskArea: inTaskArea });
-    }
-  }
-
-  // Build task groups using parent IDs
-  const taskGroups: TaskGroup[] = [];
-
-  for (const parentTask of allParentTasks) {
-    const group: TaskGroup = {
-      parent: parentTask.line,
-      subtasks: [],
-      sortKey: getTaskSortKey(parentTask.line)
-    };
-
-    if (parentTask.id) {
-      for (const subtask of allSubtasks) {
-        if (subtask.parentId === parentTask.id) {
-          group.subtasks.push(subtask.line);
+          incompleteGroups.push(chunk.group);
         }
       }
     }
 
-    // Legacy support: include subtasks without parent ID that immediately followed this task
-    const parentIndex = parentTask.index;
-    for (const subtask of allSubtasks) {
-      if (!subtask.parentId) {
-        let isDirectChild = true;
-        for (const otherParent of allParentTasks) {
-          if (otherParent.index > parentIndex && otherParent.index < subtask.index) {
-            isDirectChild = false;
-            break;
-          }
-        }
-        const closestParent = allParentTasks
-          .filter(p => p.index < subtask.index)
-          .sort((a, b) => b.index - a.index)[0];
+    // Sort incomplete groups chronologically
+    incompleteGroups.sort(chronologicalSort);
 
-        if (closestParent && closestParent.index === parentIndex && isDirectChild) {
-          if (!group.subtasks.includes(subtask.line)) {
-            group.subtasks.push(subtask.line);
-          }
+    // Reconstruct: text lines stay in place, task slots get sorted tasks
+    let taskIndex = 0;
+    for (const chunk of chunks) {
+      if (chunk.type === 'text') {
+        result.push(chunk.line);
+      } else {
+        // Task slot — emit next sorted incomplete task if available
+        if (taskIndex < incompleteGroups.length) {
+          emitTaskGroup(incompleteGroups[taskIndex], result);
+          taskIndex++;
         }
+        // Completed tasks were removed; their slot is consumed silently
       }
     }
 
-    taskGroups.push(group);
-  }
-
-  // Separate incomplete and completed
-  const incompleteGroups = taskGroups.filter(g => !isCompleted(g.parent));
-  const completedGroups = taskGroups.filter(g => isCompleted(g.parent));
-
-  // Sort incomplete groups chronologically
-  incompleteGroups.sort((a, b) => {
-    if (a.sortKey.hasTime && !b.sortKey.hasTime) return -1;
-    if (!a.sortKey.hasTime && b.sortKey.hasTime) return 1;
-    if (a.sortKey.start !== b.sortKey.start) return a.sortKey.start - b.sortKey.start;
-    return a.sortKey.end - b.sortKey.end;
-  });
-
-  // Sort completed groups chronologically
-  completedGroups.sort((a, b) => {
-    if (a.sortKey.hasTime && !b.sortKey.hasTime) return -1;
-    if (!a.sortKey.hasTime && b.sortKey.hasTime) return 1;
-    if (a.sortKey.start !== b.sortKey.start) return a.sortKey.start - b.sortKey.start;
-    return a.sortKey.end - b.sortKey.end;
-  });
-
-  // Rebuild the content
-  const firstTaskIndex = allParentTasks.length > 0 ? allParentTasks[0].index : 0;
-  const lastTaskIndex = allParentTasks.length > 0
-    ? Math.max(...allParentTasks.map(t => t.index), ...allSubtasks.map(s => s.index))
-    : 0;
-
-  // Add lines before tasks
-  for (const item of otherLines) {
-    if (item.index < firstTaskIndex) {
-      result.push(item.line);
+    // Emit any remaining tasks (if completed tasks reduced the slot count)
+    while (taskIndex < incompleteGroups.length) {
+      emitTaskGroup(incompleteGroups[taskIndex], result);
+      taskIndex++;
     }
   }
 
-  // Add sorted incomplete tasks
-  for (const group of incompleteGroups) {
-    result.push(group.parent);
-    for (const subtask of group.subtasks) {
-      result.push(subtask);
-    }
-  }
-
-  // Add lines after tasks (but before Completed section)
-  for (const item of otherLines) {
-    if (item.index > lastTaskIndex) {
-      result.push(item.line);
-    }
-  }
-
-  // Add Completed section
-  const allCompleted = [...completedGroups, ...completedTasks];
+  // Add Completed section at the end
   if (allCompleted.length > 0) {
     while (result.length > 0 && result[result.length - 1].trim() === '') {
       result.pop();
@@ -182,160 +182,257 @@ export function sortContent(content: string, settings: TaskManagerSettings): str
     result.push('');
     result.push('## Completed');
 
-    allCompleted.sort((a, b) => {
-      const keyA = getTaskSortKey(a.parent);
-      const keyB = getTaskSortKey(b.parent);
-      if (keyA.hasTime && !keyB.hasTime) return -1;
-      if (!keyA.hasTime && keyB.hasTime) return 1;
-      if (keyA.start !== keyB.start) return keyA.start - keyB.start;
-      return keyA.end - keyB.end;
-    });
+    allCompleted.sort(chronologicalSort);
 
     for (const group of allCompleted) {
-      result.push(group.parent);
-      for (const subtask of group.subtasks) {
-        result.push(subtask);
-      }
+      emitTaskGroup(group, result);
     }
   }
 
   return result.join('\n');
 }
 
-// Sort all items (tasks and events) by time block, with unscheduled at bottom
+/**
+ * Sort all items (tasks and events) by time block within each header section,
+ * with unscheduled items after scheduled ones. Preserves all non-task content
+ * in place.
+ */
 export function sortByTimeBlock(content: string, settings: TaskManagerSettings): string {
   const lines = content.split('\n');
 
-  // Pattern to extract time from any line (tasks or events)
   const TIME_PATTERN = /^[\t]*- \[.\]\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/;
-  // Pattern to detect archived callout section
   const ARCHIVE_CALLOUT_START = /^> \[!archived\]-?\s*Archived\s*$/;
   const ARCHIVE_LINE = /^> /;
 
-  // Collect all items
   type TimeSortedItem = {
     line: string;
     subtasks: string[];
-    isEvent: boolean;
+    startMinutes: number;
+    endMinutes: number;
+    hasTime: boolean;
   };
-  type ScheduledItem = TimeSortedItem & { startMinutes: number; endMinutes: number };
-  const scheduledItems: ScheduledItem[] = [];  // Items with time blocks (tasks + events)
-  const unscheduledItems: TimeSortedItem[] = []; // Items without time blocks
-  const archivedSection: string[] = [];  // Archived callout and its content
+  type ItemChunk = { type: 'item'; item: TimeSortedItem } | { type: 'text'; line: string };
 
-  let i = 0;
+  // Extract archived callout section before splitting into header sections
+  const preArchiveLines: string[] = [];
+  const archivedSection: string[] = [];
   let inArchiveSection = false;
 
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Check for archived callout section
+  for (const line of lines) {
     if (ARCHIVE_CALLOUT_START.test(line)) {
       inArchiveSection = true;
       archivedSection.push(line);
-      i++;
-      continue;
-    }
-
-    // If in archive section, collect lines until we exit
-    if (inArchiveSection) {
+    } else if (inArchiveSection) {
       if (ARCHIVE_LINE.test(line) || line.trim() === '') {
         archivedSection.push(line);
-        i++;
-        continue;
       } else {
-        // Exited archive section
         inArchiveSection = false;
+        preArchiveLines.push(line);
       }
+    } else {
+      preArchiveLines.push(line);
+    }
+  }
+
+  const sections = splitSections(preArchiveLines);
+  const result: string[] = [];
+
+  for (const section of sections) {
+    if (section.header !== null) {
+      result.push(section.header);
     }
 
-    const isParent = isParentTask(line);
-    const isEvent = isCalendarEvent(line);
+    // Parse body into item chunks and text chunks
+    const chunks: ItemChunk[] = [];
+    let i = 0;
 
-    if (isParent || isEvent) {
-      // Extract time block
-      const timeMatch = line.match(TIME_PATTERN);
+    while (i < section.bodyLines.length) {
+      const line = section.bodyLines[i];
+      const isParent = isParentTask(line);
+      const isEvent = isCalendarEvent(line);
 
-      // Collect subtasks for parent tasks
-      const subtasks: string[] = [];
-      if (isParent) {
-        const parentId = extractId(line);
-        let j = i + 1;
-        while (j < lines.length && isSubtask(lines[j])) {
-          // Check if subtask belongs to this parent (by parent ID or by position)
-          const subtaskParentId = extractParentId(lines[j]);
-          if (!subtaskParentId || subtaskParentId === parentId) {
-            subtasks.push(lines[j]);
+      if (isParent || isEvent) {
+        const subtasks: string[] = [];
+
+        if (isParent) {
+          const parentId = extractId(line);
+          let j = i + 1;
+          while (j < section.bodyLines.length && isSubtask(section.bodyLines[j])) {
+            const subtaskParentId = extractParentId(section.bodyLines[j]);
+            if (!subtaskParentId || subtaskParentId === parentId) {
+              subtasks.push(section.bodyLines[j]);
+            } else {
+              break;
+            }
+            j++;
           }
-          j++;
+          i = j;
+        } else {
+          i++;
         }
-        i = j; // Skip past subtasks
+
+        const timeMatch = line.match(TIME_PATTERN);
+        chunks.push({
+          type: 'item',
+          item: {
+            line,
+            subtasks,
+            hasTime: !!timeMatch,
+            startMinutes: timeMatch ? parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]) : Infinity,
+            endMinutes: timeMatch ? parseInt(timeMatch[3]) * 60 + parseInt(timeMatch[4]) : Infinity
+          }
+        });
+      } else if (isSubtask(line)) {
+        // Orphan subtask — preserve as text
+        chunks.push({ type: 'text', line });
+        i++;
       } else {
+        chunks.push({ type: 'text', line });
         i++;
       }
+    }
 
-      const item: TimeSortedItem = {
-        line,
-        subtasks,
-        isEvent: isEvent
-      };
-
-      if (timeMatch) {
-        const scheduledItem: ScheduledItem = {
-          ...item,
-          startMinutes: parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]),
-          endMinutes: parseInt(timeMatch[3]) * 60 + parseInt(timeMatch[4])
-        };
-        scheduledItems.push(scheduledItem);
-      } else {
-        unscheduledItems.push(item);
+    // Collect and sort items: scheduled first by time, then unscheduled
+    const items: TimeSortedItem[] = [];
+    for (const chunk of chunks) {
+      if (chunk.type === 'item') {
+        items.push(chunk.item);
       }
-    } else if (isSubtask(line)) {
-      // Orphan subtask - skip (should be collected with parent)
-      i++;
-    } else {
-      // Skip other lines (empty lines, etc.) - they'll be rebuilt in output
-      i++;
+    }
+
+    items.sort((a, b) => {
+      if (a.hasTime && !b.hasTime) return -1;
+      if (!a.hasTime && b.hasTime) return 1;
+      if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+      return a.endMinutes - b.endMinutes;
+    });
+
+    // Reconstruct: text stays in place, item slots get sorted items
+    let itemIndex = 0;
+    for (const chunk of chunks) {
+      if (chunk.type === 'text') {
+        result.push(chunk.line);
+      } else {
+        if (itemIndex < items.length) {
+          result.push(items[itemIndex].line);
+          for (const subtask of items[itemIndex].subtasks) {
+            result.push(subtask);
+          }
+          itemIndex++;
+        }
+      }
+    }
+
+    while (itemIndex < items.length) {
+      result.push(items[itemIndex].line);
+      for (const subtask of items[itemIndex].subtasks) {
+        result.push(subtask);
+      }
+      itemIndex++;
     }
   }
 
-  // Sort scheduled items by start time, then end time
-  scheduledItems.sort((a, b) => {
-    if (a.startMinutes !== b.startMinutes) {
-      return a.startMinutes - b.startMinutes;
-    }
-    return a.endMinutes - b.endMinutes;
-  });
-
-  // Build result
-  const result = [];
-
-  // Add scheduled items
-  for (const item of scheduledItems) {
-    result.push(item.line);
-    for (const subtask of item.subtasks) {
-      result.push(subtask);
-    }
-  }
-
-  // Add blank line separator before unscheduled if there are any
-  if (unscheduledItems.length > 0 && scheduledItems.length > 0) {
-    result.push('');
-  }
-
-  // Add unscheduled items
-  for (const item of unscheduledItems) {
-    result.push(item.line);
-    for (const subtask of item.subtasks) {
-      result.push(subtask);
-    }
-  }
-
-  // Add archived section at the end if it exists
+  // Add archived section at the end
   if (archivedSection.length > 0) {
     result.push('');
     for (const line of archivedSection) {
       result.push(line);
+    }
+  }
+
+  return result.join('\n');
+}
+
+// ============================================================================
+// SMART SORT
+// ============================================================================
+
+const STATUS_MARKER_PATTERN = /^[\t]*- \[(.)\]/;
+
+/** Extract the checkbox status character from a task line. */
+function extractStatus(line: string): string {
+  const m = line.match(STATUS_MARKER_PATTERN);
+  return m ? m[1] : ' ';
+}
+
+/**
+ * Map a status character to a sort rank.
+ * Lower rank = higher in the list.
+ */
+function getStatusRank(status: string): number {
+  switch (status) {
+    case 'c': return 0; // calendar events — fixed, always top
+    case ' ': return 1; // unstarted
+    case '/': return 2; // in progress
+    case '>': return 3; // scheduled
+    case '-': return 4; // cancelled
+    case 'x':
+    case 'X': return 5; // done
+    default:  return 3; // unknown statuses sort with scheduled
+  }
+}
+
+/** Get the effective priority for a task line (higher = more urgent). */
+function getEffectivePriority(line: string): number {
+  return extractPriority(line) ?? detectPriorityMarker(line) ?? 0;
+}
+
+/**
+ * Smart sort: sorts tasks within each header section by status, then
+ * priority (highest first), then time block (earliest first).
+ * Preserves all non-task content in place.
+ *
+ * Status order: calendar → unstarted → in-progress → scheduled → cancelled → done
+ */
+export function smartSort(content: string, settings: TaskManagerSettings): string {
+  const lines = content.split('\n');
+  const sections = splitSections(lines);
+  const result: string[] = [];
+
+  for (const section of sections) {
+    if (section.header !== null) {
+      result.push(section.header);
+    }
+
+    const chunks = parseTaskChunks(section.bodyLines);
+
+    // Collect all task groups from this section
+    const taskGroups: TaskGroup[] = [];
+    for (const chunk of chunks) {
+      if (chunk.type === 'task') {
+        taskGroups.push(chunk.group);
+      }
+    }
+
+    // Sort by status rank → priority (desc) → time block (asc)
+    taskGroups.sort((a, b) => {
+      const statusA = getStatusRank(extractStatus(a.parent));
+      const statusB = getStatusRank(extractStatus(b.parent));
+      if (statusA !== statusB) return statusA - statusB;
+
+      const prioA = getEffectivePriority(a.parent);
+      const prioB = getEffectivePriority(b.parent);
+      if (prioA !== prioB) return prioB - prioA; // higher priority first
+
+      return chronologicalSort(a, b);
+    });
+
+    // Reconstruct: text stays in place, task slots get sorted tasks
+    let taskIndex = 0;
+    for (const chunk of chunks) {
+      if (chunk.type === 'text') {
+        result.push(chunk.line);
+      } else {
+        if (taskIndex < taskGroups.length) {
+          emitTaskGroup(taskGroups[taskIndex], result);
+          taskIndex++;
+        }
+      }
+    }
+
+    while (taskIndex < taskGroups.length) {
+      emitTaskGroup(taskGroups[taskIndex], result);
+      taskIndex++;
     }
   }
 

@@ -212,6 +212,17 @@ export class TaskManagerSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName('Always visible field names')
+      .setDesc('Comma-separated list of field names to always show (muted) even on non-cursor lines')
+      .addText(text => text
+        .setPlaceholder('completion, status')
+        .setValue(this.plugin.settings.alwaysVisibleMetadataFieldNames)
+        .onChange(async (value) => {
+          this.plugin.settings.alwaysVisibleMetadataFieldNames = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
       .setName('Disable spellcheck on task lines')
       .setDesc('Prevents spellcheck underlines on task lines (useful for IDs and metadata)')
       .addToggle(toggle => toggle
