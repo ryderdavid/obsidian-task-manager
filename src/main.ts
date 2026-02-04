@@ -14,6 +14,7 @@ import * as TaskScheduler from './services/task-scheduler';
 import * as BulkScheduler from './services/bulk-scheduler';
 import { GutterMoreWidget } from './ui/widgets/gutter-more-widget';
 import { TaskInfoModal } from './ui/modals/task-info-modal';
+import { FolderPickerPopup } from './ui/popups/folder-picker-popup';
 import { TimePickerPopup } from './ui/popups/time-picker-popup';
 import { ScheduleDatePopup } from './ui/popups/schedule-date-popup';
 import { ScheduleDatePopupFromWidget } from './ui/popups/schedule-date-popup-from-widget';
@@ -665,18 +666,19 @@ class TaskManagerPlugin extends Plugin {
 
         const taskId = TaskUtils.extractId(currentLine);
         const sourceFilePath = activeFile.path;
+        const cursorLine = cursor.line;
 
-        (async () => {
+        const popup = new FolderPickerPopup(this, editor, cursorLine, this.settings.taskNotesFolder, async (folderPath: string) => {
           try {
             const file = await TaskNoteManager.ensureTaskNoteExists(
-              this.app, this.settings, taskText, sourceFilePath, taskId, currentLine
+              this.app, this.settings, taskText, sourceFilePath, taskId, currentLine, folderPath
             );
             if (!file) {
               new Notice('Failed to create task note');
               return;
             }
 
-            const lineNow = editor.getLine(cursor.line);
+            const lineNow = editor.getLine(cursorLine);
             if (!lineNow || TaskUtils.hasWikiLink(lineNow)) {
               new Notice('Task note created');
               return;
@@ -685,7 +687,7 @@ class TaskManagerPlugin extends Plugin {
             const wrapped = TaskUtils.wrapTaskTextWithLink(lineNow);
             if (wrapped && wrapped !== lineNow) {
               this.isProcessing = true;
-              editor.setLine(cursor.line, wrapped);
+              editor.setLine(cursorLine, wrapped);
               setTimeout(() => { this.isProcessing = false; }, 50);
             }
 
@@ -694,7 +696,8 @@ class TaskManagerPlugin extends Plugin {
             console.error('Task Manager: create task note failed', err);
             new Notice('Error creating task note');
           }
-        })();
+        });
+        popup.open();
       }
     });
 

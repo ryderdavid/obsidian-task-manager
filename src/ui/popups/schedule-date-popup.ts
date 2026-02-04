@@ -123,7 +123,7 @@ export class ScheduleDatePopup {
     if (!cm) return;
 
     const cursor = this.editor.getCursor();
-    const coords = cm.coordsAtPos(cm.state.doc.line(cursor.line + 1).from);
+    const coords = cm.coordsAtPos(cm.state.doc.line(cursor.line + 1).from + cursor.ch);
 
     if (coords && this.container) {
       this.container.style.position = 'absolute';

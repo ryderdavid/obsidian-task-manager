@@ -494,3 +494,76 @@ li[data-task=">"] > p > input {
   background: rgba(220, 60, 40, 0.28);
   border-radius: 4px;
 }
+
+/* ============================================
+   Folder Picker Popup
+   ============================================ */
+
+.folder-picker-popup {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  min-width: 300px;
+  max-width: 400px;
+  overflow: hidden;
+}
+
+.folder-picker-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.folder-picker-input:focus {
+  border-bottom-color: var(--interactive-accent);
+}
+
+.folder-picker-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.folder-picker-list {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.folder-picker-option {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.folder-picker-option:hover,
+.folder-picker-option.is-selected {
+  background: var(--background-secondary);
+}
+
+.folder-picker-path {
+  color: var(--text-normal);
+  font-size: 13px;
+}
+
+.folder-picker-more {
+  padding: 4px 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.folder-picker-empty {
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  font-style: italic;
+}

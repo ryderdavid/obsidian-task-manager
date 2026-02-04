@@ -512,12 +512,13 @@ export async function ensureTaskNoteExists(
   taskText: string,
   sourceFilePath: string | null,
   taskId: string | null = null,
-  taskLine: string | null = null
+  taskLine: string | null = null,
+  folderOverride: string | null = null
 ): Promise<TFile | null> {
   const sanitizedName = sanitizeFilename(taskText);
   if (!sanitizedName) return null;
 
-  const folderPath = settings.taskNotesFolder;
+  const folderPath = folderOverride ?? settings.taskNotesFolder;
   const filePath = `${folderPath}/${sanitizedName}.md`;
 
   // Try to find existing note by taskId first
@@ -569,7 +570,7 @@ export async function _createTaskNote(
   filePath: string,
   taskLine: string | null
 ): Promise<TFile> {
-  const folderPath = settings.taskNotesFolder;
+  const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
   const folder = app.vault.getAbstractFileByPath(folderPath);
   if (!folder) {
     await app.vault.createFolder(folderPath);
