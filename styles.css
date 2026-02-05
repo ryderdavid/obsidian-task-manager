@@ -236,6 +236,51 @@ li[data-task=">"] > p > input {
   flex: 1;
 }
 
+/* Status icon bar at top of slash command popup */
+.slash-command-status-bar {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.slash-command-status-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+
+.slash-command-status-btn:hover {
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.slash-command-status-btn.is-active {
+  color: var(--interactive-accent);
+}
+
+.slash-command-status-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.slash-command-status-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* ============================================
    Schedule Date Popup
    ============================================ */
@@ -292,6 +337,51 @@ li[data-task=">"] > p > input {
 .schedule-date-custom-input:focus {
   outline: none;
   border-color: var(--interactive-accent);
+}
+
+/* ============================================
+   Task Status Popup (vertical submenu)
+   ============================================ */
+
+.task-status-popup {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.task-status-popup-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.task-status-popup-item:hover,
+.task-status-popup-item.is-selected {
+  background: var(--background-secondary);
+}
+
+.task-status-popup-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.task-status-popup-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.task-status-popup-label {
+  color: var(--text-normal);
 }
 
 /* ============================================
