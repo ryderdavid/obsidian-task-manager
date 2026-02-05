@@ -1,6 +1,6 @@
 import { Notice, TFile } from 'obsidian';
 import type { App, Editor } from 'obsidian';
-import { extractId, isSubtask, isTask } from '../utils/task-utils';
+import { extractId, isChildLine, isSubtask, isTask } from '../utils/task-utils';
 import {
   extractTaskTextFromLine,
   sanitizeFilename,
@@ -239,15 +239,17 @@ export async function scheduleTask(
   // -----------------------------------------------------------------------
   const totalLines = editor.lineCount();
   for (let i = lineNum + 1; i < totalLines; i++) {
-    const subtaskLine = editor.getLine(i);
-    if (isSubtask(subtaskLine)) {
-      // Mark subtask as scheduled (change [ ] to [>])
-      const updatedSubtask = subtaskLine.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
-      if (updatedSubtask !== subtaskLine) {
-        editor.setLine(i, updatedSubtask);
+    const childLine = editor.getLine(i);
+    if (isChildLine(childLine)) {
+      // Mark subtask as scheduled (change [ ] to [>]) — skip subnotes (no checkbox)
+      if (isSubtask(childLine)) {
+        const updatedChild = childLine.replace(/^([\t]*- \[)[^\]](\])/, '$1>$2');
+        if (updatedChild !== childLine) {
+          editor.setLine(i, updatedChild);
+        }
       }
     } else {
-      // Stop at first non-subtask line
+      // Stop at first non-child line
       break;
     }
   }
@@ -326,19 +328,21 @@ export async function unscheduleTask(
   editor.setLine(lineNum, updatedLine);
 
   // -----------------------------------------------------------------------
-  // STEP 2: Reset subtasks (change [>] back to [ ])
+  // STEP 2: Reset children (change [>] back to [ ] for subtasks, skip subnotes)
   // -----------------------------------------------------------------------
   const totalLines = editor.lineCount();
   for (let i = lineNum + 1; i < totalLines; i++) {
-    const subtaskLine = editor.getLine(i);
-    if (isSubtask(subtaskLine)) {
-      // Reset subtask marker from [>] to [ ]
-      const resetSubtask = subtaskLine.replace(/^([\t]*- \[)>(\])/, '$1 $2');
-      if (resetSubtask !== subtaskLine) {
-        editor.setLine(i, resetSubtask);
+    const childLine = editor.getLine(i);
+    if (isChildLine(childLine)) {
+      // Reset subtask marker from [>] to [ ] — skip subnotes (no checkbox)
+      if (isSubtask(childLine)) {
+        const resetChild = childLine.replace(/^([\t]*- \[)>(\])/, '$1 $2');
+        if (resetChild !== childLine) {
+          editor.setLine(i, resetChild);
+        }
       }
     } else {
-      // Stop at first non-subtask line
+      // Stop at first non-child line
       break;
     }
   }
@@ -365,17 +369,17 @@ export async function unscheduleTask(
       }
 
       if (taskLineIndex !== -1) {
-        // Count how many lines to remove (task + its subtasks)
+        // Count how many lines to remove (task + its children)
         let linesToRemove = 1;
         for (let i = taskLineIndex + 1; i < lines.length; i++) {
-          if (isSubtask(lines[i])) {
+          if (isChildLine(lines[i])) {
             linesToRemove++;
           } else {
             break;
           }
         }
 
-        // Remove the task and its subtasks
+        // Remove the task and its children
         lines.splice(taskLineIndex, linesToRemove);
 
         // Clean up: collapse consecutive blank lines

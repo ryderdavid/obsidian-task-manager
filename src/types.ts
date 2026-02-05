@@ -9,6 +9,7 @@ export interface TaskManagerSettings {
   // Task IDs
   enableTaskIds: boolean;
   idPrefix: string;
+  noteIdPrefix: string;
   idLength: number;
 
   // Parent-Child Linking

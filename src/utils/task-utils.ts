@@ -15,6 +15,7 @@ export const METADATA_PATTERN = /\s*\[(?:id|parent|uid)::[^\]]+\]/g;
 export const COMPLETED_PATTERN = /^[\t]*- \[[xX\->]\]/;
 export const TIMEBLOCK_PATTERN = /^- \[.\]\s*(\d{2}):(\d{2}) - (\d{2}):(\d{2})/;
 export const CALENDAR_EVENT_PATTERN = /^[\t]*- \[c\]/;
+export const SUBNOTE_PATTERN = /^\t+- (?!\[.\])/;
 
 export function extractId(line: string): string | null {
   const match = line.match(ID_PATTERN);
@@ -29,6 +30,15 @@ export function extractParentId(line: string): string | null {
 export function generateId(settings: TaskManagerSettings): string {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
   let id = settings.idPrefix;
+  for (let i = 0; i < settings.idLength; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return id;
+}
+
+export function generateNoteId(settings: TaskManagerSettings): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let id = settings.noteIdPrefix;
   for (let i = 0; i < settings.idLength; i++) {
     id += chars.charAt(Math.floor(Math.random() * chars.length));
   }
@@ -96,6 +106,14 @@ export function isParentTask(line: string): boolean {
 
 export function isSubtask(line: string): boolean {
   return SUBTASK_PATTERN.test(line);
+}
+
+export function isSubnote(line: string): boolean {
+  return SUBNOTE_PATTERN.test(line);
+}
+
+export function isChildLine(line: string): boolean {
+  return isSubtask(line) || isSubnote(line);
 }
 
 export function isCompleted(line: string): boolean {

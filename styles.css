@@ -657,3 +657,20 @@ li[data-task=">"] > p > input {
   text-align: center;
   font-style: italic;
 }
+
+/* ============================================
+   Subnote Styling (completed parent fade)
+   ============================================ */
+
+/* Live Preview: subnotes under completed parents (via CodeMirror decoration) */
+.subnote-parent-completed {
+  color: var(--text-faint) !important;
+  font-style: italic;
+}
+
+/* Reading View: plain list items nested under completed tasks */
+.markdown-preview-view li[data-task='x'].task-list-item.is-checked ul li:not(.task-list-item),
+.markdown-preview-view li[data-task='X'].task-list-item.is-checked ul li:not(.task-list-item) {
+  color: var(--text-faint) !important;
+  font-style: italic;
+}
