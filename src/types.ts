@@ -22,7 +22,6 @@ export interface TaskManagerSettings {
   tasksWithoutTimePosition: string;
 
   // UI
-  showInfoButton: boolean;
   hideMetadataFields: boolean;
   hiddenMetadataFieldNames: string;
   alwaysVisibleMetadataFieldNames: string;
