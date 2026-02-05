@@ -9,8 +9,8 @@ import type { TaskManagerSettings } from '../types';
 // BULK SCHEDULER MODULE - Schedule all overdue tasks
 // ============================================================================
 
-// Pattern for incomplete tasks (not completed, cancelled, scheduled, or in-progress)
-const INCOMPLETE_TASK_PATTERN = /^[\t]*- \[ \]/;
+// Pattern for actionable tasks: incomplete [ ] or in-progress [/]
+const INCOMPLETE_TASK_PATTERN = /^[\t]*- \[[ /]\]/;
 
 type OverdueTask = {
   file: TFile;
