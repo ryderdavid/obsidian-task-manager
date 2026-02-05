@@ -12,8 +12,6 @@ import * as TaskNoteManager from './services/task-note-manager';
 import * as EventNoteManager from './services/event-note-manager';
 import * as TaskScheduler from './services/task-scheduler';
 import * as BulkScheduler from './services/bulk-scheduler';
-import { GutterMoreWidget } from './ui/widgets/gutter-more-widget';
-import { TaskInfoModal } from './ui/modals/task-info-modal';
 import { FolderPickerPopup } from './ui/popups/folder-picker-popup';
 import { TimePickerPopup } from './ui/popups/time-picker-popup';
 import { ScheduleDatePopup } from './ui/popups/schedule-date-popup';
@@ -161,35 +159,6 @@ class TaskManagerPlugin extends Plugin {
                 // Legacy schedule tags ([> DATE], [scheduled_to::], [sch_to::]) are still
                 // readable by the scheduling system but no longer hidden/decorated
 
-                // Determine what to show in the unified container
-                const isCalendarEvent = TaskUtils.isCalendarEvent(lineText);
-                const uid = isCalendarEvent ? IcsEventSync.extractUid(lineText) : null;
-                const calendarSource = isCalendarEvent ? IcsEventSync.extractCalendar(lineText) : null;
-
-                // For calendar events, extract event title; for tasks, extract task text
-                const taskText = isCalendarEvent
-                  ? EventNoteManager.extractEventTitle(lineText)
-                  : TaskNoteManager.extractTaskTextFromLine(lineText);
-                const showInfoButton = plugin.settings.showInfoButton && (taskId || parentId || uid);
-
-                // Add gutter "more" widget at line start (shown on hover)
-                if (showInfoButton) {
-                  decorations.push({
-                    from: line.from,
-                    to: line.from,
-                    value: Decoration.widget({
-                      widget: new GutterMoreWidget({
-                        taskText: taskText,
-                        taskId: taskId,
-                        parentId: parentId,
-                        uid: uid,
-                        isCalendarEvent: isCalendarEvent,
-                        calendarSource: calendarSource
-                      }, plugin),
-                      side: -1
-                    })
-                  });
-                }
               } else if (TaskUtils.isSubnote(lineText)) {
                 // Subnote line — check if parent task is completed for fade styling
                 const parentId = TaskUtils.extractParentId(lineText);
@@ -521,23 +490,6 @@ class TaskManagerPlugin extends Plugin {
       }
     });
 
-    this.addCommand({
-      id: 'show-task-info',
-      name: 'Show task info for current line',
-      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-        const cursor = editor.getCursor();
-        const line = editor.getLine(cursor.line);
-        const taskId = TaskUtils.extractId(line);
-        const parentId = TaskUtils.extractParentId(line);
-        const taskText = TaskNoteManager.extractTaskTextFromLine(line);
-
-        if (taskId || parentId) {
-          this.showTaskInfo(taskId, parentId, taskText, editor, cursor.line);
-        } else {
-          new Notice('No task metadata on this line');
-        }
-      }
-    });
 
     // Task-specific commands (conditionally enabled via editorCheckCallback)
     // These integrate with Slash Commander and command palette
@@ -1133,48 +1085,6 @@ class TaskManagerPlugin extends Plugin {
       editor.setLine(lineNum, newLine);
       setTimeout(() => { this.isProcessing = false; }, 50);
     }
-  }
-
-  showTaskInfo(
-    taskId: string | null,
-    parentId: string | null,
-    taskText: string | null,
-    editor: Editor | null,
-    lineNum?: number,
-    uid?: string | null,
-    isCalendarEvent?: boolean,
-    calendarSource?: string | null
-  ) {
-    // Find parent task text by ID if we have a parentId
-    let parentText = null;
-    if (parentId) {
-      const activeFile = this.app.workspace.getActiveFile();
-      if (activeFile) {
-        // Get the current document content to search for parent
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (view && view.editor) {
-          const content = view.editor.getValue();
-          const lines = content.split('\n');
-          for (const line of lines) {
-            const lineId = TaskUtils.extractId(line);
-            if (lineId === parentId) {
-              parentText = TaskNoteManager.extractTaskTextFromLine(line);
-              break;
-            }
-          }
-        }
-      }
-    }
-
-    const modal = new TaskInfoModal(this.app, taskId, parentId, taskText, parentText, () => {
-      if (editor && lineNum !== undefined) {
-        const line = editor.getLine(lineNum);
-        const newLine = TaskUtils.removeParentId(line);
-        editor.setLine(lineNum, newLine);
-        new Notice('Task unlinked from parent');
-      }
-    }, uid ?? null, isCalendarEvent ?? false, calendarSource ?? null);
-    modal.open();
   }
 
   // Show schedule popup positioned relative to a widget element

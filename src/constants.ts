@@ -25,7 +25,6 @@ export const DEFAULT_SETTINGS: TaskManagerSettings = {
   tasksWithoutTimePosition: 'end',
 
   // UI
-  showInfoButton: true,
   hideMetadataFields: true,
   hiddenMetadataFieldNames: 'id, parent, uid, calendar, priority',
   alwaysVisibleMetadataFieldNames: '',

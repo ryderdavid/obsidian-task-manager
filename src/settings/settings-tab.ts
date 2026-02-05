@@ -181,16 +181,6 @@ export class TaskManagerSettingTab extends PluginSettingTab {
     containerEl.createEl('h3', { text: 'Display' });
 
     new Setting(containerEl)
-      .setName('Show info button')
-      .setDesc('Display info button (i) on tasks to view metadata')
-      .addToggle(toggle => toggle
-        .setValue(this.plugin.settings.showInfoButton)
-        .onChange(async (value) => {
-          this.plugin.settings.showInfoButton = value;
-          await this.plugin.saveSettings();
-        }));
-
-    new Setting(containerEl)
       .setName('Hide metadata fields')
       .setDesc('Hide inline Dataview fields in the editor (e.g. [id::...], [parent::...])')
       .addToggle(toggle => toggle
