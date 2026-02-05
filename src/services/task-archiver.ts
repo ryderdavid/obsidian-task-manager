@@ -1,4 +1,4 @@
-import { CALENDAR_EVENT_PATTERN, SUBTASK_PATTERN } from '../utils/task-utils';
+import { CALENDAR_EVENT_PATTERN, SUBTASK_PATTERN, isSubnote } from '../utils/task-utils';
 import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
@@ -61,7 +61,7 @@ export function archiveContent(content: string, settings: TaskManagerSettings): 
       const taskGroup = [line];
       i++;
       // Collect subtasks
-      while (i < lines.length && SUBTASK_PATTERN.test(lines[i])) {
+      while (i < lines.length && (SUBTASK_PATTERN.test(lines[i]) || isSubnote(lines[i]))) {
         taskGroup.push(lines[i]);
         i++;
       }
@@ -74,7 +74,7 @@ export function archiveContent(content: string, settings: TaskManagerSettings): 
       const taskGroup = [line];
       i++;
       // Collect subtasks
-      while (i < lines.length && SUBTASK_PATTERN.test(lines[i])) {
+      while (i < lines.length && (SUBTASK_PATTERN.test(lines[i]) || isSubnote(lines[i]))) {
         taskGroup.push(lines[i]);
         i++;
       }

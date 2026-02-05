@@ -5,9 +5,9 @@ import {
   detectPriorityMarker,
   getTaskSortKey,
   isCalendarEvent,
+  isChildLine,
   isCompleted,
-  isParentTask,
-  isSubtask
+  isParentTask
 } from '../utils/task-utils';
 import type { TaskManagerSettings } from '../types';
 
@@ -16,7 +16,7 @@ import type { TaskManagerSettings } from '../types';
 // ============================================================================
 
 type TaskSortKey = ReturnType<typeof getTaskSortKey>;
-type TaskGroup = { parent: string; subtasks: string[]; sortKey: TaskSortKey };
+type TaskGroup = { parent: string; children: string[]; sortKey: TaskSortKey };
 type Chunk = { type: 'task'; group: TaskGroup } | { type: 'text'; line: string };
 type Section = { header: string | null; bodyLines: string[] };
 
@@ -34,13 +34,13 @@ function parseTaskChunks(bodyLines: string[]): Chunk[] {
 
     if (isParentTask(line)) {
       const id = extractId(line);
-      const subtasks: string[] = [];
+      const children: string[] = [];
       let j = i + 1;
 
-      while (j < bodyLines.length && isSubtask(bodyLines[j])) {
-        const subtaskParentId = extractParentId(bodyLines[j]);
-        if (!subtaskParentId || subtaskParentId === id) {
-          subtasks.push(bodyLines[j]);
+      while (j < bodyLines.length && isChildLine(bodyLines[j])) {
+        const childParentId = extractParentId(bodyLines[j]);
+        if (!childParentId || childParentId === id) {
+          children.push(bodyLines[j]);
         } else {
           break;
         }
@@ -49,11 +49,11 @@ function parseTaskChunks(bodyLines: string[]): Chunk[] {
 
       chunks.push({
         type: 'task',
-        group: { parent: line, subtasks, sortKey: getTaskSortKey(line) }
+        group: { parent: line, children, sortKey: getTaskSortKey(line) }
       });
       i = j;
-    } else if (isSubtask(line)) {
-      // Orphan subtask (no parent before it) — preserve as text
+    } else if (isChildLine(line)) {
+      // Orphan child (no parent before it) — preserve as text
       chunks.push({ type: 'text', line });
       i++;
     } else {
@@ -96,8 +96,8 @@ function chronologicalSort(a: TaskGroup, b: TaskGroup): number {
 /** Emit a task group's lines into a result array. */
 function emitTaskGroup(group: TaskGroup, result: string[]): void {
   result.push(group.parent);
-  for (const subtask of group.subtasks) {
-    result.push(subtask);
+  for (const child of group.children) {
+    result.push(child);
   }
 }
 
@@ -206,7 +206,7 @@ export function sortByTimeBlock(content: string, settings: TaskManagerSettings):
 
   type TimeSortedItem = {
     line: string;
-    subtasks: string[];
+    children: string[];
     startMinutes: number;
     endMinutes: number;
     hasTime: boolean;
@@ -252,15 +252,15 @@ export function sortByTimeBlock(content: string, settings: TaskManagerSettings):
       const isEvent = isCalendarEvent(line);
 
       if (isParent || isEvent) {
-        const subtasks: string[] = [];
+        const children: string[] = [];
 
         if (isParent) {
           const parentId = extractId(line);
           let j = i + 1;
-          while (j < section.bodyLines.length && isSubtask(section.bodyLines[j])) {
-            const subtaskParentId = extractParentId(section.bodyLines[j]);
-            if (!subtaskParentId || subtaskParentId === parentId) {
-              subtasks.push(section.bodyLines[j]);
+          while (j < section.bodyLines.length && isChildLine(section.bodyLines[j])) {
+            const childParentId = extractParentId(section.bodyLines[j]);
+            if (!childParentId || childParentId === parentId) {
+              children.push(section.bodyLines[j]);
             } else {
               break;
             }
@@ -276,14 +276,14 @@ export function sortByTimeBlock(content: string, settings: TaskManagerSettings):
           type: 'item',
           item: {
             line,
-            subtasks,
+            children,
             hasTime: !!timeMatch,
             startMinutes: timeMatch ? parseInt(timeMatch[1]) * 60 + parseInt(timeMatch[2]) : Infinity,
             endMinutes: timeMatch ? parseInt(timeMatch[3]) * 60 + parseInt(timeMatch[4]) : Infinity
           }
         });
-      } else if (isSubtask(line)) {
-        // Orphan subtask — preserve as text
+      } else if (isChildLine(line)) {
+        // Orphan child — preserve as text
         chunks.push({ type: 'text', line });
         i++;
       } else {
@@ -315,8 +315,8 @@ export function sortByTimeBlock(content: string, settings: TaskManagerSettings):
       } else {
         if (itemIndex < items.length) {
           result.push(items[itemIndex].line);
-          for (const subtask of items[itemIndex].subtasks) {
-            result.push(subtask);
+          for (const child of items[itemIndex].children) {
+            result.push(child);
           }
           itemIndex++;
         }
@@ -325,8 +325,8 @@ export function sortByTimeBlock(content: string, settings: TaskManagerSettings):
 
     while (itemIndex < items.length) {
       result.push(items[itemIndex].line);
-      for (const subtask of items[itemIndex].subtasks) {
-        result.push(subtask);
+      for (const child of items[itemIndex].children) {
+        result.push(child);
       }
       itemIndex++;
     }

@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS: TaskManagerSettings = {
   // Task IDs
   enableTaskIds: true,
   idPrefix: 't-',
+  noteIdPrefix: 'n-',
   idLength: 8,
 
   // Parent-Child Linking

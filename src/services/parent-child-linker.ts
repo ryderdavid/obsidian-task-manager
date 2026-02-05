@@ -2,8 +2,8 @@ import {
   addParentId,
   extractId,
   extractParentId,
+  isChildLine,
   isParentTask,
-  isSubtask,
   removeParentId
 } from '../utils/task-utils';
 import type { TaskManagerSettings } from '../types';
@@ -22,7 +22,7 @@ export function linkContent(content: string, settings: TaskManagerSettings): str
     let line = lines[i];
 
     const isParent = isParentTask(line);
-    const isChild = isSubtask(line);
+    const isChild = isChildLine(line);
 
     if (isParent) {
       currentParentId = extractId(line);
@@ -37,7 +37,7 @@ export function linkContent(content: string, settings: TaskManagerSettings): str
     } else if (isChild) {
       const existingParentId = extractParentId(line);
 
-      // Only add parent link if subtask doesn't have one and parent has an ID
+      // Only add parent link if child doesn't have one and parent has an ID
       if (!existingParentId && currentParentId) {
         line = addParentId(line, currentParentId);
       }

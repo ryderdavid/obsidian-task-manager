@@ -190,6 +190,47 @@ class TaskManagerPlugin extends Plugin {
                     })
                   });
                 }
+              } else if (TaskUtils.isSubnote(lineText)) {
+                // Subnote line — check if parent task is completed for fade styling
+                const parentId = TaskUtils.extractParentId(lineText);
+                let parentCompleted = false;
+
+                if (parentId) {
+                  // Look backwards for the parent task line (stop at headers)
+                  for (let scanPos = line.from - 1; scanPos >= 0;) {
+                    const prevLine = view.state.doc.lineAt(scanPos);
+                    if (/^#/.test(prevLine.text)) break;
+                    if (TaskUtils.isParentTask(prevLine.text)) {
+                      const prevId = TaskUtils.extractId(prevLine.text);
+                      if (prevId === parentId) {
+                        parentCompleted = TaskUtils.isCompleted(prevLine.text);
+                      }
+                      break;
+                    }
+                    scanPos = prevLine.from - 1;
+                  }
+                } else {
+                  // No parent ID yet — look backwards for nearest parent task (stop at headers)
+                  for (let scanPos = line.from - 1; scanPos >= 0;) {
+                    const prevLine = view.state.doc.lineAt(scanPos);
+                    if (/^#/.test(prevLine.text)) break;
+                    if (TaskUtils.isParentTask(prevLine.text)) {
+                      parentCompleted = TaskUtils.isCompleted(prevLine.text);
+                      break;
+                    }
+                    scanPos = prevLine.from - 1;
+                  }
+                }
+
+                if (parentCompleted) {
+                  decorations.push({
+                    from: line.from,
+                    to: line.from,
+                    value: Decoration.line({
+                      attributes: { class: 'subnote-parent-completed' }
+                    })
+                  });
+                }
               }
 
               pos = line.to + 1;
@@ -1004,6 +1045,41 @@ class TaskManagerPlugin extends Plugin {
     const editor = activeView.editor;
     const line = editor.getLine(lineNum);
     if (!line) return;
+
+    // Handle subnotes (indented bullets without checkbox)
+    if (TaskUtils.isSubnote(line)) {
+      let newLine = line;
+      let modified = false;
+
+      // Add ID if missing (with note prefix)
+      if (this.settings.enableTaskIds && !TaskUtils.extractId(line)) {
+        newLine = TaskUtils.addId(newLine, TaskUtils.generateNoteId(this.settings));
+        modified = true;
+      }
+
+      // Add parent link if missing
+      if (this.settings.enableParentChildLinking && !TaskUtils.extractParentId(newLine)) {
+        let parentId = null;
+        for (let i = lineNum - 1; i >= 0; i--) {
+          const prevLine = editor.getLine(i);
+          if (TaskUtils.isParentTask(prevLine)) {
+            parentId = TaskUtils.extractId(prevLine);
+            break;
+          }
+        }
+        if (parentId) {
+          newLine = TaskUtils.addParentId(newLine, parentId);
+          modified = true;
+        }
+      }
+
+      if (modified) {
+        this.isProcessing = true;
+        editor.setLine(lineNum, newLine);
+        setTimeout(() => { this.isProcessing = false; }, 50);
+      }
+      return;
+    }
 
     // Only process task lines (but NOT calendar events)
     if (!TaskUtils.isTask(line)) return;
