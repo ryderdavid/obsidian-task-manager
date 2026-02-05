@@ -46,8 +46,10 @@ export function getDailyNotePath(date: string, settings: TaskManagerSettings): s
 
 // Create the scheduled copy of a task (for the target date)
 export function createScheduledTaskCopy(line: string, fromDate: string): string {
-  // Remove the [>] marker and restore to [ ] for the copy
-  let taskCopy = line.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
+  // Preserve in-progress [/] state; otherwise reset to [ ]
+  const originalMarker = line.match(/^[\t]*- \[(.)\]/)?.[1];
+  const copyMarker = originalMarker === '/' ? '/' : ' ';
+  let taskCopy = line.replace(/^([\t]*- \[)[^\]](\])/, `$1${copyMarker}$2`);
   // Remove any existing scheduling tags and calendar icons
   taskCopy = removeSchedulingTags(taskCopy);
   // Keep the task ID (same task, different date)
@@ -201,8 +203,10 @@ export async function scheduleTask(
     for (let i = 0; i < lines.length; i++) {
       if (idPattern.test(lines[i])) {
         let updatedLine = lines[i];
-        // Reset marker to [ ] (it's now the active copy)
-        updatedLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, '$1 $2');
+        // Preserve in-progress [/] state; otherwise reset to [ ]
+        const existingMarker = line.match(/^[\t]*- \[(.)\]/)?.[1];
+        const targetMarker = existingMarker === '/' ? '/' : ' ';
+        updatedLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, `$1${targetMarker}$2`);
         // Remove old scheduling tags
         updatedLine = removeSchedulingTags(updatedLine);
         // Add schedule-from tag with wikilink date
