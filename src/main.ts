@@ -19,6 +19,7 @@ import { TimePickerPopup } from './ui/popups/time-picker-popup';
 import { ScheduleDatePopup } from './ui/popups/schedule-date-popup';
 import { ScheduleDatePopupFromWidget } from './ui/popups/schedule-date-popup-from-widget';
 import { TimePickerPopupFromWidget } from './ui/popups/time-picker-popup-from-widget';
+import { StatusBarPopup } from './ui/popups/status-bar-popup';
 import { TimeblockShortcutSuggest } from './ui/suggests/timeblock-shortcut-suggest';
 import { SlashCommandSuggest } from './ui/suggests/slash-command-suggest';
 import { ScheduleShortcutSuggest } from './ui/suggests/schedule-shortcut-suggest';
@@ -213,8 +214,19 @@ class TaskManagerPlugin extends Plugin {
 
     this.registerEditorExtension([infoButtonPlugin]);
 
-    // Register slash command suggest
-    this.registerEditorSuggest(new SlashCommandSuggest(this.app, this));
+    // Register slash command suggest and move to front of the suggest queue
+    // so it takes priority over Slash Commander on task lines
+    const slashSuggest = new SlashCommandSuggest(this.app, this);
+    this.registerEditorSuggest(slashSuggest);
+    const editorSuggest = (this.app.workspace as any).editorSuggest;
+    if (editorSuggest?.suggests) {
+      const suggests = editorSuggest.suggests;
+      const idx = suggests.indexOf(slashSuggest);
+      if (idx > 0) {
+        suggests.splice(idx, 1);
+        suggests.unshift(slashSuggest);
+      }
+    }
 
     // Register schedule shortcut suggest (> shortcut)
     this.registerEditorSuggest(new ScheduleShortcutSuggest(this.app, this));
@@ -527,17 +539,31 @@ class TaskManagerPlugin extends Plugin {
       }
     });
 
-    // Task Note Status Commands (for use with Buttons plugin in task notes)
+    // Status Bar Popup (horizontal icon bar)
+    this.addCommand({
+      id: 'set-task-status',
+      name: 'Set task status',
+      editorCheckCallback: (checking: boolean, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+        const cursor = editor.getCursor();
+        const line = editor.getLine(cursor.line);
+        if (!TaskUtils.isTask(line)) return false;
+        if (checking) return true;
+        const popup = new StatusBarPopup(this, editor, cursor.line);
+        popup.open();
+      }
+    });
+
+    // Task Note Status Commands (also fall through to inline task editing)
     this.addCommand({
       id: 'set-status-complete',
       name: 'Set task status: Complete',
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
-        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new Notice('This command only works in task notes');
+        if (file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          await this.updateTaskNoteStatus(file, 'complete');
           return;
         }
-        await this.updateTaskNoteStatus(file, 'complete');
+        this.setInlineTaskStatus('x');
       }
     });
 
@@ -546,11 +572,11 @@ class TaskManagerPlugin extends Plugin {
       name: 'Set task status: Incomplete',
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
-        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new Notice('This command only works in task notes');
+        if (file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          await this.updateTaskNoteStatus(file, 'incomplete');
           return;
         }
-        await this.updateTaskNoteStatus(file, 'incomplete');
+        this.setInlineTaskStatus(' ');
       }
     });
 
@@ -559,11 +585,11 @@ class TaskManagerPlugin extends Plugin {
       name: 'Set task status: In Progress',
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
-        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new Notice('This command only works in task notes');
+        if (file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          await this.updateTaskNoteStatus(file, 'in-progress');
           return;
         }
-        await this.updateTaskNoteStatus(file, 'in-progress');
+        this.setInlineTaskStatus('/');
       }
     });
 
@@ -572,11 +598,11 @@ class TaskManagerPlugin extends Plugin {
       name: 'Set task status: Cancelled',
       callback: async () => {
         const file = this.app.workspace.getActiveFile();
-        if (!file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
-          new Notice('This command only works in task notes');
+        if (file?.path.startsWith(this.settings.taskNotesFolder + '/')) {
+          await this.updateTaskNoteStatus(file, 'cancelled');
           return;
         }
-        await this.updateTaskNoteStatus(file, 'cancelled');
+        this.setInlineTaskStatus('-');
       }
     });
 
@@ -901,6 +927,24 @@ class TaskManagerPlugin extends Plugin {
         this.isProcessing = false;
       }, 100);
     }
+  }
+
+  // Helper method to set inline task checkbox status from set-status-* commands
+  private setInlineTaskStatus(checkboxChar: string) {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view) {
+      new Notice('No active editor');
+      return;
+    }
+    const editor = view.editor;
+    const cursor = editor.getCursor();
+    const line = editor.getLine(cursor.line);
+    if (!TaskUtils.isTask(line)) {
+      new Notice('Place cursor on a task line');
+      return;
+    }
+    const newLine = line.replace(/^([\t]*- \[)[^\]](\])/, `$1${checkboxChar}$2`);
+    editor.setLine(cursor.line, newLine);
   }
 
   // Helper method to update task note status from commands/buttons

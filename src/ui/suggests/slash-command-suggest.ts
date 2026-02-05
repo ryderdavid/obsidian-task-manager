@@ -4,7 +4,7 @@ import type TaskManagerPlugin from '../../main';
 import { isTask } from '../../utils/task-utils';
 import { TimePickerPopup } from '../popups/time-picker-popup';
 import { ScheduleDatePopup } from '../popups/schedule-date-popup';
-import { SLASH_COMMANDS } from '../../constants';
+import { SLASH_COMMANDS, STATUS_BAR_OPTIONS } from '../../constants';
 
 // ============================================================================
 // SLASH COMMAND SUGGEST
@@ -14,10 +14,63 @@ type SlashCommandSuggestion = (typeof SLASH_COMMANDS)[number];
 
 export class SlashCommandSuggest extends EditorSuggest<SlashCommandSuggestion> {
   plugin: TaskManagerPlugin;
+  private statusBar: HTMLDivElement;
 
   constructor(app: App, plugin: TaskManagerPlugin) {
     super(app);
     this.plugin = plugin;
+
+    // Prepend horizontal status icon bar to the suggest popup
+    this.statusBar = createDiv({ cls: 'slash-command-status-bar' });
+    this.buildStatusBar();
+    this.suggestEl.prepend(this.statusBar);
+  }
+
+  private buildStatusBar() {
+    for (const option of STATUS_BAR_OPTIONS) {
+      const btn = this.statusBar.createEl('button', {
+        cls: 'slash-command-status-btn',
+        attr: { 'aria-label': option.label, 'data-char': option.char }
+      });
+      const iconEl = btn.createSpan({ cls: 'slash-command-status-icon' });
+      iconEl.innerHTML = option.icon;
+
+      btn.addEventListener('click', (e: MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.applyStatus(option.char);
+      });
+    }
+  }
+
+  private updateStatusBarHighlight(line: string) {
+    const match = line.match(/^[\t]*- \[(.)\]/);
+    const currentChar = match ? match[1] : null;
+
+    this.statusBar.querySelectorAll('.slash-command-status-btn').forEach(btn => {
+      const el = btn as HTMLElement;
+      el.removeClass('is-active');
+      if (el.dataset.char === currentChar) {
+        el.addClass('is-active');
+      }
+    });
+  }
+
+  private applyStatus(char: string) {
+    const ctx = this.context;
+    if (!ctx) return;
+    const { editor } = ctx;
+    const lineNum = ctx.start.line;
+
+    // Remove the "/" and any typed query
+    editor.replaceRange('', ctx.start, ctx.end);
+
+    // Apply status change
+    const updatedLine = editor.getLine(lineNum);
+    const newLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, `$1${char}$2`);
+    editor.setLine(lineNum, newLine);
+
+    this.close();
   }
 
   onTrigger(cursor: EditorPosition, editor: Editor, file: TFile | null): EditorSuggestTriggerInfo | null {
@@ -41,6 +94,9 @@ export class SlashCommandSuggest extends EditorSuggest<SlashCommandSuggestion> {
 
     // Don't trigger if a space was typed after / (user wants to keep the character)
     if (afterSlash.includes(' ')) return null;
+
+    // Update status bar to highlight the current task's status
+    this.updateStatusBarHighlight(line);
 
     return {
       start: { line: cursor.line, ch: slashIndex },
@@ -69,19 +125,11 @@ export class SlashCommandSuggest extends EditorSuggest<SlashCommandSuggestion> {
     if (!ctx) return;
     const { editor } = ctx;
     const lineNum = ctx.start.line;
-    const line = editor.getLine(lineNum);
 
     // Remove the "/" and any typed query
     editor.replaceRange('', ctx.start, ctx.end);
 
-    // Re-read line after removal
-    const updatedLine = editor.getLine(lineNum);
-
-    if (suggestion.marker) {
-      // Change task status marker
-      const newLine = updatedLine.replace(/^([\t]*- \[)[^\]](\])/, `$1${suggestion.marker}$2`);
-      editor.setLine(lineNum, newLine);
-    } else if (suggestion.action === 'schedule') {
+    if (suggestion.action === 'schedule') {
       this.openSchedulePopup(editor, lineNum);
     } else if (suggestion.action === 'timeblock') {
       this.openTimeBlockPopup(editor, lineNum);
