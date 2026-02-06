@@ -127,6 +127,7 @@ export const STATUS_BAR_OPTIONS = [
 // ============================================================================
 
 export const SCHEDULE_SUGGESTIONS = [
+  { id: 'today', label: 'Schedule to Today', icon: Icons.anglesRight },
   { id: 'tomorrow', label: 'Schedule to Tomorrow', icon: Icons.anglesRight },
   { id: 'pick-date', label: 'Pick a Date...', icon: Icons.anglesRight },
 ];
