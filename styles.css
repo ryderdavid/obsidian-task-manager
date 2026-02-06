@@ -97,9 +97,26 @@ li[data-task=">"] > p > input {
    Inline Widgets
    ============================================ */
 
-/* Time block pill (inline, clickable) - adds interactivity without changing appearance */
+/* Time block pill (inline, clickable) - understated gray with monospace */
 .timeblock-pill {
   cursor: pointer;
+  background-color: var(--background-secondary);
+  color: var(--text-muted);
+  border-radius: var(--tag-radius, var(--radius-s));
+  padding: var(--tag-padding-y, 0.1em) var(--tag-padding-x, 0.4em);
+  font-size: var(--tag-size);
+  font-weight: var(--tag-weight);
+  font-family: var(--font-monospace);
+  line-height: 1;
+  text-decoration: none;
+  margin: 0 0.15em;
+  display: inline-block;
+  vertical-align: baseline;
+}
+
+.timeblock-pill:hover {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
 }
 
 
