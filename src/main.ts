@@ -793,12 +793,6 @@ class TaskManagerPlugin extends Plugin {
 
     // Add settings tab
     this.addSettingTab(new TaskManagerSettingTab(this.app, this));
-
-    // Add status bar item showing version and git branch
-    const version = this.manifest.version;
-    const branch = typeof __GIT_BRANCH__ !== 'undefined' ? __GIT_BRANCH__ : 'unknown';
-    const statusBarEl = this.addStatusBarItem();
-    statusBarEl.setText(`Task Manager: v${version} | ${branch}`);
   }
 
   onunload() {
