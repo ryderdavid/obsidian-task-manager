@@ -113,6 +113,17 @@ export class ScheduleShortcutSuggest extends EditorSuggest<DynamicScheduleSugges
         lineNum,
         suggestion.date
       );
+    } else if (suggestion.id === 'today') {
+      // Schedule to today
+      const today = new Date();
+      const dateStr = today.toISOString().split('T')[0];
+      scheduleTask(
+        this.plugin.app,
+        this.plugin.settings,
+        editor,
+        lineNum,
+        dateStr
+      );
     } else if (suggestion.id === 'tomorrow') {
       // Schedule to tomorrow
       const tomorrow = new Date();
