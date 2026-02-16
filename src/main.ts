@@ -992,41 +992,6 @@ class TaskManagerPlugin extends Plugin {
     const line = editor.getLine(lineNum);
     if (!line) return;
 
-    // Handle subnotes (indented bullets without checkbox)
-    if (TaskUtils.isSubnote(line)) {
-      let newLine = line;
-      let modified = false;
-
-      // Add ID if missing (with note prefix)
-      if (this.settings.enableTaskIds && !TaskUtils.extractId(line)) {
-        newLine = TaskUtils.addId(newLine, TaskUtils.generateNoteId(this.settings));
-        modified = true;
-      }
-
-      // Add parent link if missing
-      if (this.settings.enableParentChildLinking && !TaskUtils.extractParentId(newLine)) {
-        let parentId = null;
-        for (let i = lineNum - 1; i >= 0; i--) {
-          const prevLine = editor.getLine(i);
-          if (TaskUtils.isParentTask(prevLine)) {
-            parentId = TaskUtils.extractId(prevLine);
-            break;
-          }
-        }
-        if (parentId) {
-          newLine = TaskUtils.addParentId(newLine, parentId);
-          modified = true;
-        }
-      }
-
-      if (modified) {
-        this.isProcessing = true;
-        editor.setLine(lineNum, newLine);
-        setTimeout(() => { this.isProcessing = false; }, 50);
-      }
-      return;
-    }
-
     // Only process task lines (but NOT calendar events)
     if (!TaskUtils.isTask(line)) return;
     if (TaskUtils.isCalendarEvent(line)) return;

@@ -1,4 +1,4 @@
-import { addId, extractId, generateId, generateNoteId, isCalendarEvent, isSubnote, isTask } from '../utils/task-utils';
+import { addId, extractId, generateId, isCalendarEvent, isTask } from '../utils/task-utils';
 import type { TaskManagerSettings } from '../types';
 
 // ============================================================================
@@ -21,10 +21,6 @@ export function processContent(content: string, settings: TaskManagerSettings): 
     if (isTask(line)) {
       if (!extractId(line)) {
         line = addId(line, generateId(settings));
-      }
-    } else if (isSubnote(line)) {
-      if (!extractId(line)) {
-        line = addId(line, generateNoteId(settings));
       }
     }
 
