@@ -64,7 +64,7 @@ li[data-task=">"] > p > input {
   border: none !important;
   border-radius: 0 !important;
   background-image: none !important;
-  background-color: var(--text-muted) !important;
+  background-color: var(--text-faint) !important;
   -webkit-mask-image: var(--clock-icon) !important;
   -webkit-mask-size: contain !important;
   -webkit-mask-position: center !important;
@@ -78,7 +78,7 @@ li[data-task=">"] > p > input {
   border: none !important;
   border-radius: 0 !important;
   background-image: none !important;
-  background-color: var(--text-muted) !important;
+  background-color: var(--text-faint) !important;
   -webkit-mask-image: var(--clock-icon) !important;
   -webkit-mask-size: contain !important;
   -webkit-mask-position: center !important;
